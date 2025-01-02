@@ -1,0 +1,130 @@
+project:
+  id: YOUR_PROJECT_ID
+  region: YOUR_REGION
+
+data:
+  bucket_name: YOUR_DATA_BUCKET
+  sync_interval: 3600  # seconds
+  ml_artifacts_bucket: YOUR_ML_ARTIFACTS_BUCKET
+  credentials:
+    secret_pattern: "gmail-credentials-{user_id}-{email}"
+    default_secret: "google-credentials-default"
+    firebase_secret: "firebase-credentials-default"
+  user_batch_size: 10
+  transaction_batch_size: 100
+  transaction:
+    batch_size: 500
+    status_values:
+      - pending
+      - processed
+      - failed
+    required_fields:
+      - id
+      - date
+      - description
+      - amount
+      - account_id
+      - user_id
+
+storage:
+  buckets:
+    data: YOUR_DATA_BUCKET
+    ml_artifacts: YOUR_ML_ARTIFACTS_BUCKET
+    functions: YOUR_FUNCTIONS_BUCKET
+  location: YOUR_REGION
+
+model:
+  training_file: transaction_categorizations.xlsx
+  model_name: transaction_categorization_model
+
+cloud_run:
+  service_name: transaction-api
+  min_instances: 1
+  max_instances: 10
+  cpu_utilization: 0.65
+  instance_class: F1
+  container_image: gcr.io/${PROJECT_ID}/transaction-api:latest
+
+cloud_function:
+  name: transaction-processor
+  runtime: python310
+  timeout: 540
+  entry_point: process_transactions
+  source_path: gs://${PROJECT_ID}-functions/function-code.zip
+  exclude_patterns:
+    - sample_code/
+    - tests/
+    - scripts/
+    - .vscode/
+    - .coverage
+    - .pytest_cache/
+    - htmlcov/
+    - "*.egg-info/"
+    - build/
+    - dist/
+    - .mypy_cache/
+    - .hypothesis/
+    - .tox/
+    - docs/
+    - notebooks/
+
+auth:
+  gmail:
+    service_url: "imap.gmail.com"
+    port: 993
+    email_to_account:
+      "user1@example.com": "user1"
+      "user2@example.com": "user2"
+    accounts:
+      user1:
+        credentials_file: "credentials/gmail_oauth_credentials_user1.json"
+        user_id: "YOUR_USER_ID_1"
+      user2:
+        credentials_file: "credentials/gmail_oauth_credentials_user2.json"
+        user_id: "YOUR_USER_ID_2"
+    scopes:
+      - "https://www.googleapis.com/auth/gmail.readonly"
+      - "https://www.googleapis.com/auth/gmail.modify"
+
+gcp:
+  project_id: "YOUR_PROJECT_ID"
+  region: "YOUR_REGION"
+  service_account_key_path: "credentials/service-account-key.json"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+scheduler:
+  transaction_sync:
+    schedule: "*/10 * * * *"
+    timezone: "America/Chicago"
+    retry_count: 3
+    retry_interval: 300
+    timeout: 540
+
+testing:
+  run_after_deployment: true
+  run_all_tests: false
+  wait_time: 10
+  test_order:
+    - unit_tests
+    - package_tests
+  components:
+    unit_tests: true
+    package_tests: true
+    config_tests: false
+    integration_tests: false
+    function: true
+    scheduler: false
+    pubsub: false
+    http: false
+    pubsub_trigger: false
+  test_paths:
+    unit_tests:
+      - tests/test_gmail_integration.py
+      - tests/test_transaction_parser.py
+    package_tests:
+      - scripts/test_deployment_package.py
+    post_deployment:
+      - scripts/test_function.py 

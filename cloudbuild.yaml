@@ -1,0 +1,8 @@
+export GOOGLE_CLOUD_PROJECT="your-project-id"
+gcloud services enable \
+    aiplatform.googleapis.com \
+    storage.googleapis.com \
+    containerregistry.googleapis.com
+gcloud projects add-iam-policy-binding $GOOGLE_CLOUD_PROJECT \
+    --member="serviceAccount:$GOOGLE_CLOUD_PROJECT@appspot.gserviceaccount.com" \
+    --role="roles/aiplatform.user"

@@ -1,0 +1,34 @@
+venv/
+__pycache__/
+*.pyc
+.env
+config.yaml
+
+# Credentials - ignore real credentials but not samples
+credentials/*
+!credentials/sample_*
+!credentials/README.md
+
+# Temporary files and build artifacts
+temp/
+.function_hashes.json
+.scheduler_hashes.json
+.pytest_cache/
+
+# IDE files
+.vscode/
+.idea/
+
+# Build and distribution
+*.egg-info/
+dist/
+build/
+
+
+*.key
+*.pem
+
+
+# Logs
+*.log
+logs/ 
