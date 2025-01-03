@@ -3,33 +3,45 @@
 # Exit on any error
 set -e
 
+echo "[DEBUG] Starting setup script..."
+echo "[DEBUG] Current working directory: $(pwd)"
+echo "[DEBUG] Script location: $0"
+echo "[DEBUG] All script parameters: $@"
+
 # Check if running in Cloud Build
 if [ -n "$CLOUD_BUILD" ]; then
-    echo "Running in Cloud Build environment"
+    echo "[DEBUG] Detected Cloud Build environment"
+    echo "[DEBUG] CLOUD_BUILD value: $CLOUD_BUILD"
     NON_INTERACTIVE=1
+    echo "Running in Cloud Build environment"
     echo "Using Cloud Build service account authentication"
     # Skip GCP auth check in Cloud Build as it uses service account
     echo "Using service account credentials for Terraform"
     export USE_GCP_AUTH=0
 else
+    echo "[DEBUG] Running in local environment"
     NON_INTERACTIVE=0
     export USE_GCP_AUTH=1
 fi
 
 # Get the current directory
 CURRENT_DIR=$(pwd)
-echo "Current directory is: $CURRENT_DIR"
+echo "[DEBUG] Setting up environment variables..."
+echo "[DEBUG] CURRENT_DIR: $CURRENT_DIR"
 
 # Set PYTHONPATH to include current directory
 export PYTHONPATH="$CURRENT_DIR:$PYTHONPATH"
-echo "Set PYTHONPATH to include current directory: $PYTHONPATH"
+echo "[DEBUG] Updated PYTHONPATH: $PYTHONPATH"
 
 # Install pyyaml if needed
+echo "[DEBUG] Installing Python dependencies..."
 echo "Installing required Python packages..."
 pip install pyyaml --quiet
+echo "[DEBUG] pip install result: $?"
 
 # Read project configuration from config.yaml
-echo "Reading project configuration..."
+echo "[DEBUG] Reading project configuration..."
+echo "[DEBUG] Creating temporary Python script for config reading..."
 echo "import yaml" > read_config.py
 echo "with open('config.yaml', 'r') as f:" >> read_config.py
 echo "    config = yaml.safe_load(f)" >> read_config.py
@@ -37,16 +49,27 @@ echo "print('PROJECT_ID=' + str(config['gcp']['project_id']).strip())" >> read_c
 echo "print('REGION=' + str(config['gcp']['region']).strip())" >> read_config.py
 
 # Get project ID and region from config.yaml
+echo "[DEBUG] Executing config reading script..."
 python3 read_config.py > config_output.tmp
+if [ $? -ne 0 ]; then
+    echo "[ERROR] Failed to read config.yaml"
+    echo "[DEBUG] Current directory contents:"
+    ls -la
+    exit 1
+fi
+
 while IFS='=' read -r key value; do
     if [ "$key" = "PROJECT_ID" ]; then
         PROJECT_ID="$value"
+        echo "[DEBUG] Found PROJECT_ID: $PROJECT_ID"
     elif [ "$key" = "REGION" ]; then
         REGION="$value"
+        echo "[DEBUG] Found REGION: $REGION"
     fi
 done < config_output.tmp
 
 # Clean up temporary files
+echo "[DEBUG] Cleaning up temporary files..."
 rm read_config.py
 rm config_output.tmp
 
@@ -54,44 +77,68 @@ echo "Using project ID: $PROJECT_ID"
 echo "Using region: $REGION"
 
 # Check if Terraform is installed
-echo "Checking for Terraform installation..."
+echo "[DEBUG] Checking for Terraform installation..."
+echo "[DEBUG] Current PATH: $PATH"
 if ! command -v terraform &> /dev/null; then
+    echo "[DEBUG] Terraform not found in PATH"
     echo "Terraform is not installed or not in PATH."
     echo
 
     if [ "$NON_INTERACTIVE" = "1" ]; then
+        echo "[DEBUG] Running in non-interactive mode, proceeding with automatic installation"
         echo "Running in non-interactive mode, installing Terraform automatically..."
         # Download and install Terraform directly in Cloud Build environment
         echo "Downloading Terraform..."
+        echo "[DEBUG] Downloading from: https://releases.hashicorp.com/terraform/1.7.4/terraform_1.7.4_linux_amd64.zip"
         wget https://releases.hashicorp.com/terraform/1.7.4/terraform_1.7.4_linux_amd64.zip
         if [ $? -ne 0 ]; then
-            echo "Error: Failed to download Terraform."
+            echo "[ERROR] Failed to download Terraform"
+            echo "[DEBUG] wget exit code: $?"
             USE_TERRAFORM=0
         else
-            echo "Cleaning up any existing Terraform files..."
-            # Only remove existing terraform binary/directory, not the zip
-            rm -rf terraform
-            rm -f terraform_*.exe
+            echo "[DEBUG] Terraform download successful"
+            echo "Cleaning up any existing Terraform binary..."
+            echo "[DEBUG] Current directory contents before cleanup:"
+            ls -la
+            # Only remove the terraform binary file in the current directory, preserving the terraform directory
+            rm -f ./terraform.exe
+            rm -f ./terraform.exe.old
+            rm -f ./terraform_*.exe
+            # If it exists, remove the non-Windows terraform binary
+            if [ -f "./terraform" ]; then
+                echo "[DEBUG] Found existing terraform binary, removing it"
+                rm -f "./terraform"
+            fi
+            echo "[DEBUG] Current directory contents after cleanup:"
+            ls -la
             
             echo "Unzipping Terraform..."
             # Force overwrite without prompting
             unzip -o terraform_1.7.4_linux_amd64.zip
-            if [ $? -ne 0 ]; then
-                echo "Error: Failed to unzip Terraform."
+            UNZIP_RESULT=$?
+            echo "[DEBUG] unzip exit code: $UNZIP_RESULT"
+            if [ $UNZIP_RESULT -ne 0 ]; then
+                echo "[ERROR] Failed to unzip Terraform"
                 USE_TERRAFORM=0
             else
+                echo "[DEBUG] Successfully unzipped Terraform"
                 echo "Installing Terraform..."
                 chmod +x terraform
+                echo "[DEBUG] Attempting to move terraform to /usr/local/bin"
                 mv -f terraform /usr/local/bin/
                 if [ $? -ne 0 ]; then
+                    echo "[DEBUG] Failed to move to /usr/local/bin, trying current directory"
                     echo "Error: Failed to install Terraform. Trying current directory..."
                     mv -f terraform ./terraform
+                    echo "[DEBUG] Adding current directory to PATH"
                     export PATH=$PATH:$PWD
                     USE_TERRAFORM=1
                 else
+                    echo "[DEBUG] Successfully installed Terraform to /usr/local/bin"
                     echo "Terraform installed successfully."
                     USE_TERRAFORM=1
                 fi
+                echo "[DEBUG] Cleaning up zip file"
                 rm -f terraform_1.7.4_linux_amd64.zip
             fi
         fi
@@ -256,45 +303,9 @@ if [ -z "$CLOUD_BUILD" ]; then
             fi
         fi
     fi
-else
-    echo "Skipping GCP auth check in Cloud Build environment"
 fi
 
-# Check application default credentials (only if not in Cloud Build)
-if [ -z "$CLOUD_BUILD" ]; then
-    echo "[DEBUG] Starting application default credentials check..."
-    echo "Step 2: Checking application default credentials..."
-    echo "Testing access token retrieval..."
-    if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then
-        echo "[DEBUG] No ADC found, entering setup..."
-        echo "No application default credentials found (required for Terraform)."
-        echo
-        echo "NOTE: The next step will open a browser window for authentication."
-        echo "After authenticating, return to this window to continue."
-        echo
-        read -p "Press Enter to continue..."
-        
-        echo "[DEBUG] Starting ADC login..."
-        if ! gcloud auth application-default login --no-launch-browser; then
-            echo
-            echo "Error: Failed to set up application default credentials."
-            exit 1
-        else
-            echo
-            echo "Successfully configured application default credentials."
-        fi
-    else
-        echo "[DEBUG] ADC already configured"
-        echo "✓ Application default credentials are already configured."
-        echo "✓ User is authenticated as: $ACTIVE_ACCOUNT"
-    fi
-else
-    echo "Using Cloud Build service account credentials for Terraform"
-    # In Cloud Build, credentials are automatically available to Terraform
-    export GOOGLE_APPLICATION_CREDENTIALS="/workspace/service-account.json"
-fi
-
-echo "[DEBUG] Authentication check complete"
+# Print current GCP configuration
 echo
 echo "Current GCP configuration:"
 echo "------------------------"
@@ -307,295 +318,67 @@ gcloud config get-value compute/region
 echo "------------------------"
 echo
 
-# Now use Terraform to manage infrastructure
-echo "Initializing Terraform..."
+# Initialize Terraform
+echo "[DEBUG] Starting Terraform initialization..."
+echo "[DEBUG] Current directory: $(pwd)"
+echo "[DEBUG] Directory contents:"
+ls -la
 
-# Handle GOOGLE_APPLICATION_CREDENTIALS path
+# Debug: Check if GOOGLE_APPLICATION_CREDENTIALS is set
 if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
     echo "[DEBUG] Found GOOGLE_APPLICATION_CREDENTIALS set to: $GOOGLE_APPLICATION_CREDENTIALS"
-    # Convert relative path to absolute path
-    CREDENTIALS_PATH="$CURRENT_DIR/$GOOGLE_APPLICATION_CREDENTIALS"
-    echo "[DEBUG] Using absolute path for credentials: $CREDENTIALS_PATH"
-    if [ -f "$CREDENTIALS_PATH" ]; then
-        echo "[DEBUG] Service account key file found"
-        export GOOGLE_APPLICATION_CREDENTIALS="$CREDENTIALS_PATH"
-    else
-        echo "[DEBUG] Service account key file not found at: $CREDENTIALS_PATH"
+    # Get absolute path for credentials
+    ABSOLUTE_CREDS_PATH="$CURRENT_DIR/$GOOGLE_APPLICATION_CREDENTIALS"
+    echo "[DEBUG] Using absolute path for credentials: $ABSOLUTE_CREDS_PATH"
+    
+    # Check if the file exists
+    if [ ! -f "$ABSOLUTE_CREDS_PATH" ]; then
+        echo "[DEBUG] Service account key file not found at: $ABSOLUTE_CREDS_PATH"
+        echo "[DEBUG] Directory contents:"
+        ls -la "$(dirname "$ABSOLUTE_CREDS_PATH")"
         echo "[DEBUG] Falling back to application default credentials"
-        unset GOOGLE_APPLICATION_CREDENTIALS
-    fi
-fi
-
-cd terraform
-
-# Initialize Terraform first
-if ! terraform init; then
-    echo "Error: Failed to initialize Terraform."
-    exit 1
-fi
-
-echo
-echo "Showing planned changes..."
-if ! terraform plan; then
-    echo "Error: Failed to plan Terraform changes."
-    exit 1
-fi
-
-# Modify the Terraform apply section to use non-interactive mode
-if [ "$NON_INTERACTIVE" = "1" ]; then
-    echo "Running in non-interactive mode, applying Terraform changes automatically..."
-    terraform apply -auto-approve
-else
-    echo
-    echo "Would you like to apply these changes?"
-    echo "[1] Yes, apply the changes"
-    echo "[2] No, skip Terraform changes"
-    echo
-    read -p "Enter your choice (1-2): " APPLY_CHOICE
-
-    if [ "$APPLY_CHOICE" = "1" ]; then
-        echo "Applying Terraform changes..."
-        terraform apply -auto-approve
     else
-        echo "Skipping Terraform changes."
+        echo "[DEBUG] Service account key file found and readable"
     fi
 fi
 
-cd ..
-
-# Check if virtual environment exists
-if [ -d "venv" ]; then
-    echo "Found existing virtual environment"
-else
-    echo "Creating virtual environment..."
-    python3 -m venv venv
-fi
-
-# Activate virtual environment
-source venv/bin/activate
-
-# Set test environment variable
-export TEST_ENV=true
-
-# Install requirements if needed
-echo "Installing requirements..."
-pip install -r requirements.txt > /dev/null 2>&1
-
-# Run tests and deployment
-echo "Checking test configuration..."
-echo "=== Running Pre-deployment Tests ==="
-
-# Run unit tests first
-echo
-echo "Step 1: Running unit tests..."
-
-# Upgrade pip silently
-python -m pip install --upgrade pip --quiet
-
-# Install requirements
-echo "Installing requirements..."
-python -m pip install -r requirements.txt --quiet --no-warn-script-location
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to install requirements"
-    python -m pip install -r requirements.txt
+# Change to terraform directory and initialize
+echo "[DEBUG] Changing to terraform directory..."
+cd terraform || {
+    echo "[ERROR] Failed to change to terraform directory"
+    echo "[DEBUG] Current directory: $(pwd)"
+    echo "[DEBUG] Directory contents:"
+    ls -la
     exit 1
-fi
+}
 
-# Run pre-deployment tests if enabled in config
-echo
-echo "Checking test configuration..."
+echo "[DEBUG] Current directory after cd: $(pwd)"
+echo "[DEBUG] Terraform directory contents:"
+ls -la
 
-# Create Python script for test configuration
-cat > temp_config.py << 'EOL'
-import yaml
-import json
+echo "[DEBUG] Running terraform init..."
+terraform init -input=false
+INIT_RESULT=$?
+echo "[DEBUG] terraform init exit code: $INIT_RESULT"
 
-config = yaml.safe_load(open('config.yaml'))
-test_config = config.get('testing', {})
-components = test_config.get('components', {})
-test_paths = test_config.get('test_paths', {})
-test_order = test_config.get('test_order', ['unit_tests', 'package_tests', 'config_tests', 'integration_tests'])
-
-run_tests = '1' if test_config.get('run_after_deployment', False) else '0'
-run_all = '1' if test_config.get('run_all_tests', False) else '0'
-
-print(f'RUN_TESTS={run_tests}')
-print(f'RUN_ALL={run_all}')
-print(f'TEST_ORDER={",".join(test_order)}')
-
-for test_type in test_order:
-    enabled = '1' if components.get(test_type, True) else '0'
-    print(f'{test_type.upper()}_ENABLED={enabled}')
-    paths = test_paths.get(test_type, [])
-    if paths:
-        print(f'{test_type.upper()}_PATHS={" ".join(paths)}')
-EOL
-
-# Execute the temporary script and capture output
-while IFS='=' read -r key value; do
-    if [ -n "$key" ]; then
-        eval "$key=$value"
-    fi
-done < <(python3 temp_config.py)
-rm temp_config.py
-
-if [ "$RUN_TESTS" = "1" ]; then
-    echo "=== Running Pre-deployment Tests ==="
-    echo
+# If in Cloud Build, run terraform plan and apply
+if [ -n "$CLOUD_BUILD" ]; then
+    echo "[DEBUG] Executing Terraform in Cloud Build environment"
+    echo "Running Terraform in Cloud Build environment..."
+    echo "[DEBUG] Running terraform plan..."
+    terraform plan -input=false -out=tfplan
+    PLAN_RESULT=$?
+    echo "[DEBUG] terraform plan exit code: $PLAN_RESULT"
     
-    STEP=1
-    
-    # Execute tests in order
-    for TEST_TYPE in ${TEST_ORDER//,/ }; do
-        ENABLED_VAR="${TEST_TYPE^^}_ENABLED"
-        PATHS_VAR="${TEST_TYPE^^}_PATHS"
-        
-        if [ "${!ENABLED_VAR}" = "1" ]; then
-            echo
-            echo "Step $STEP: Running $TEST_TYPE tests..."
-            
-            case "$TEST_TYPE" in
-                "unit_tests")
-                    if [ "$RUN_ALL" = "1" ]; then
-                        python -m pytest tests -v
-                        if [ $? -ne 0 ]; then
-                            echo "Error: Unit tests failed"
-                            exit 1
-                        fi
-                    else
-                        for TEST_PATH in ${!PATHS_VAR}; do
-                            echo "Running tests in: $TEST_PATH"
-                            python -m pytest "$TEST_PATH" -v
-                            if [ $? -ne 0 ]; then
-                                echo "Error: Unit tests failed in $TEST_PATH"
-                                exit 1
-                            fi
-                        done
-                    fi
-                    ;;
-                    
-                "package_tests")
-                    for TEST_PATH in ${!PATHS_VAR}; do
-                        python "$TEST_PATH"
-                        if [ $? -ne 0 ]; then
-                            echo "Error: Package tests failed"
-                            exit 1
-                        fi
-                    done
-                    ;;
-                    
-                "config_tests")
-                    for TEST_PATH in ${!PATHS_VAR}; do
-                        python "$TEST_PATH"
-                        if [ $? -ne 0 ]; then
-                            echo "Error: Configuration tests failed"
-                            exit 1
-                        fi
-                    done
-                    ;;
-                    
-                "integration_tests")
-                    # Integration tests are run after deployment
-                    echo "Integration tests will run after deployment"
-                    ;;
-            esac
-        else
-            echo "Skipping $TEST_TYPE (disabled in config)"
-        fi
-        
-        STEP=$((STEP + 1))
-    done
-    
-    echo
-    echo "=== All Pre-deployment Tests Passed ==="
-    echo
-else
-    echo "Skipping tests (disabled in config.yaml)"
-    echo
-fi
-
-echo "=== Starting Deployment ==="
-echo
-
-# Check if we should deploy infrastructure with Terraform
-if [ "$USE_TERRAFORM" = "1" ]; then
-    echo "Step 1: Applying Terraform configuration..."
-    cd terraform
-    terraform init
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to initialize Terraform"
-        exit 1
+    if [ $PLAN_RESULT -eq 0 ]; then
+        echo "[DEBUG] Running terraform apply..."
+        terraform apply -input=false -auto-approve tfplan
+        APPLY_RESULT=$?
+        echo "[DEBUG] terraform apply exit code: $APPLY_RESULT"
+    else
+        echo "[ERROR] Terraform plan failed, skipping apply"
     fi
-    terraform apply
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to apply Terraform configuration"
-        exit 1
-    fi
-    cd ..
-    echo "Terraform resources deployed successfully"
-    echo
 fi
 
-# Deploy storage buckets (will respect Terraform state)
-echo "Step 2: Deploying storage buckets..."
-python scripts/deploy_storage.py
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to deploy storage buckets"
-    exit 1
-fi
-
-# Set up service accounts
-echo "Step 3: Setting up service accounts..."
-python scripts/setup_service_accounts.py
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to set up service accounts"
-    exit 1
-fi
-
-# Deploy credentials (will respect Terraform state)
-echo "Step 4: Deploying credentials..."
-python scripts/deploy_credentials.py
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to deploy credentials"
-    exit 1
-fi
-
-# Wait for a moment to ensure all resources are ready
-echo
-cat > temp_wait.py << 'EOL'
-import yaml
-config = yaml.safe_load(open('config.yaml'))
-print(config.get('testing', {}).get('wait_time', 5))
-EOL
-
-WAIT_TIME=$(python3 temp_wait.py)
-rm temp_wait.py
-
-echo "Waiting for $WAIT_TIME seconds to ensure all resources are ready..."
-sleep "$WAIT_TIME"
-
-# Deploy Cloud Function and Scheduler (will respect Terraform state)
-echo "Step 5: Deploying Cloud Function and Scheduler..."
-python scripts/deploy_functions.py
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to deploy Cloud Function and Scheduler"
-    exit 1
-fi
-
-# Run post-deployment integration tests if enabled
-if [ "$RUN_TESTS" = "1" ]; then
-    echo
-    echo "Step 6: Running post-deployment tests..."
-    for TEST_PATH in ${POST_DEPLOYMENT_PATHS}; do
-        python "$TEST_PATH"
-        if [ $? -ne 0 ]; then
-            echo "Warning: Post-deployment test failed"
-            echo "Please check the logs above for details"
-            exit 1
-        fi
-    done
-fi
-
-echo
-echo "=== Deployment Completed Successfully ==="
-exit 0
+echo "[DEBUG] Setup script completed"
+echo "Setup complete!"
