@@ -27,8 +27,8 @@ steps:
         sed -i "s/YOUR_PROJECT_ID/${_PROJECT_ID}/g" /workspace/config.yaml
         sed -i "s/YOUR_REGION/${_REGION}/g" /workspace/config.yaml
         
-        # Install python3-venv
-        apt-get update && apt-get install -y python3-venv
+        # Install required packages
+        apt-get update && apt-get install -y python3-venv wget unzip
 
         # Create and activate virtual environment
         python3 -m venv /workspace/venv
