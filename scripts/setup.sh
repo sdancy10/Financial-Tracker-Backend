@@ -33,6 +33,13 @@ echo "[DEBUG] CURRENT_DIR: $CURRENT_DIR"
 export PYTHONPATH="$CURRENT_DIR:$PYTHONPATH"
 echo "[DEBUG] Updated PYTHONPATH: $PYTHONPATH"
 
+# Activate virtual environment in Cloud Build
+if [ -n "$CLOUD_BUILD" ]; then
+    echo "[DEBUG] Activating virtual environment in Cloud Build..."
+    source /workspace/venv/bin/activate
+    echo "[DEBUG] Virtual environment activated, Python path: $(which python3)"
+fi
+
 # Install Python dependencies (skip in Cloud Build)
 if [ -n "$CLOUD_BUILD" ]; then
     echo "[DEBUG] Skipping Python package installation in Cloud Build environment (handled by cloudbuild.yaml)"
