@@ -15,6 +15,18 @@ steps:
     args:
       - '-c'
       - |
+        # Debug: List files in workspace
+        echo "Contents of /workspace:"
+        ls -la /workspace
+        
+        # Create config.yaml from example
+        echo "Creating config.yaml from example..."
+        cp /workspace/config.yaml.example /workspace/config.yaml
+        
+        # Update project-specific values
+        sed -i "s/YOUR_PROJECT_ID/${_PROJECT_ID}/g" /workspace/config.yaml
+        sed -i "s/YOUR_REGION/${_REGION}/g" /workspace/config.yaml
+        
         # Install python3-venv
         apt-get update && apt-get install -y python3-venv
 
@@ -24,9 +36,6 @@ steps:
 
         # Set PATH to include venv before running setup.sh
         export PATH="/workspace/venv/bin:$$PATH"
-
-        # Copy config.yaml to workspace root
-        cp terraform/config.yaml /workspace/config.yaml
 
         # Now run setup.sh in the virtual environment
         cd /workspace
