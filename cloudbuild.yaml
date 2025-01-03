@@ -32,14 +32,57 @@ steps:
         sed -i "s/YOUR_REGION/${_REGION}/g" /workspace/config.yaml
         
         # Install required system packages
-        apt-get update && apt-get install -y python3-venv wget unzip terraform python3-pip
+        echo "Installing system packages..."
+        apt-get update && \
+        echo "[DEBUG] Initial apt-get update complete" && \
+        apt-get install -y python3.11-venv wget unzip python3-pip gnupg software-properties-common curl && \
+        echo "[DEBUG] Base packages installed successfully" && \
+        # Add Terraform repository
+        echo "Adding HashiCorp repository..." && \
+        curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add - && \
+        echo "[DEBUG] HashiCorp GPG key added" && \
+        apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main" && \
+        echo "[DEBUG] HashiCorp repository added" && \
+        apt-get update && \
+        echo "[DEBUG] Repository update complete" && \
+        apt-get install -y terraform && \
+        echo "[DEBUG] Terraform installed successfully: $(terraform --version)"
+
+        # Debug: Show Python version and location
+        echo "[DEBUG] Python environment:"
+        echo "Python version:"
+        python3 --version
+        echo "Python location:"
+        which python3
+        echo "Pip version:"
+        pip3 --version
+        echo "Pip location:"
+        which pip3
 
         # Create and activate virtual environment
+        echo "[DEBUG] Setting up virtual environment..."
+        echo "Creating virtual environment at /workspace/venv"
         python3 -m venv /workspace/venv
+        echo "[DEBUG] Virtual environment creation complete"
+        echo "[DEBUG] Virtual environment contents before activation:"
+        ls -la /workspace/venv/bin
+        echo "Activating virtual environment..."
         . /workspace/venv/bin/activate
+        
+        # Verify virtual environment
+        echo "[DEBUG] Virtual environment verification:"
+        echo "Virtual environment created at: $VIRTUAL_ENV"
+        echo "Using Python: $(which python3)"
+        echo "Python version: $(python3 --version)"
+        echo "Using pip: $(which pip)"
+        echo "Pip version: $(pip --version)"
 
         # Install Python requirements in the virtual environment
+        echo "[DEBUG] Installing Python requirements..."
+        echo "Contents of requirements.txt:"
+        cat requirements.txt
         pip install --require-virtualenv -r requirements.txt
+        echo "[DEBUG] Python requirements installation complete"
 
         # Set PATH to include venv before running setup.sh
         export PATH="/workspace/venv/bin:$$PATH"
