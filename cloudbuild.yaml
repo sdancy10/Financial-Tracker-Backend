@@ -11,7 +11,7 @@ steps:
     secretEnv: ['SERVICE_ACCOUNT_KEY']
 
   # Run setup.sh
-  - name: 'bash'
+  - name: 'python:3.10'
     entrypoint: 'bash'
     args: ['scripts/setup.sh']
     env:
