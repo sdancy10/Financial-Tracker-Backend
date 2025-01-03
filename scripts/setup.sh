@@ -63,6 +63,9 @@ if ! command -v terraform &> /dev/null; then
             echo "Error: Failed to download Terraform."
             USE_TERRAFORM=0
         else
+            echo "Cleaning up any existing Terraform files..."
+            rm -rf terraform terraform_*
+            
             echo "Unzipping Terraform..."
             # Force overwrite without prompting
             unzip -o terraform_1.7.4_linux_amd64.zip
