@@ -97,22 +97,10 @@ steps:
         ls -la /workspace/terraform || echo "terraform directory not found"
         echo
 
-        # Debug: Check service account file
-        echo "[DEBUG] Checking service account file..."
-        if [ -f "/workspace/service-account.json" ]; then
-            echo "[DEBUG] Service account file exists"
-            echo "[DEBUG] File permissions:"
-            ls -l /workspace/service-account.json
-        else
-            echo "[ERROR] Service account file not found at /workspace/service-account.json"
-            echo "[DEBUG] Contents of /workspace:"
-            ls -la /workspace
-        fi
-
         # Now run setup.sh in the virtual environment
         cd /workspace
         export GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account.json
-        echo "[DEBUG] Set GOOGLE_APPLICATION_CREDENTIALS to: $GOOGLE_APPLICATION_CREDENTIALS"
+        echo "[DEBUG] Set GOOGLE_APPLICATION_CREDENTIALS to: $$GOOGLE_APPLICATION_CREDENTIALS"
         bash scripts/setup.sh
     env:
       - 'CLOUD_BUILD=1'
