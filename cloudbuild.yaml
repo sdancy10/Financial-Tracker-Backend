@@ -1,33 +1,20 @@
 steps:
-  # Get service account key from Secret Manager
+  # Activate service account
   - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
     args:
-      - '-c'
-      - |
-        echo "$$SERVICE_ACCOUNT_KEY" > /workspace/service-account-key.json
-        echo "Activating service account..."
-        gcloud auth activate-service-account --key-file=/workspace/service-account-key.json
-    secretEnv: ['SERVICE_ACCOUNT_KEY']
+      - 'auth'
+      - 'activate-service-account'
+      - '--key-file=${_SERVICE_ACCOUNT_KEY}'
 
-  # Create config.yaml from example
-  - name: 'bash'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        cp config.yaml.example config.yaml
-        sed -i "s/YOUR_PROJECT_ID/${_PROJECT_ID}/g" config.yaml
-        sed -i "s/YOUR_REGION/${_REGION}/g" config.yaml
-
-  # Run setup.sh
-  - name: 'python:3.10'
+  # Run setup.sh using google/cloud-sdk image which has both Python and gcloud
+  - name: 'google/cloud-sdk:latest'
     entrypoint: 'bash'
     args: ['scripts/setup.sh']
     env:
       - 'CLOUD_BUILD=1'
-      - 'PYTHONPATH=/workspace'
-      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
+      - 'NON_INTERACTIVE=1'
+      - 'PYTHONUNBUFFERED=1'
+    id: 'run-setup'
 
 timeout: '1800s'  # 30 minutes
 
