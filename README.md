@@ -65,6 +65,26 @@ python -m pytest tests/
 python src/main.py
 ```
 
+## Support and Troubleshooting
+
+For support:
+1. Check the documentation
+2. Review existing issues
+3. Create a new issue if needed
+
+Common troubleshooting commands:
+
+```bash
+# View recent Cloud Function logs
+gcloud logging read "resource.type=cloud_function" --limit 10
+
+# View logs for specific message ID
+gcloud logging read "resource.type=cloud_function AND textPayload:YOUR_MESSAGE_ID" --limit 10
+
+# View transaction processing failures
+gcloud logging read "resource.type=cloud_function AND severity>=WARNING" --limit 10
+```
+
 ## Infrastructure Management
 
 The application uses Terraform to manage Google Cloud Platform services:
