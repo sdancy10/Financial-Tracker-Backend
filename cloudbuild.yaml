@@ -22,6 +22,9 @@ steps:
         python3 -m venv /workspace/venv
         . /workspace/venv/bin/activate
 
+        # Set PATH to include venv before running setup.sh
+        export PATH="/workspace/venv/bin:$PATH"
+
         # Now run setup.sh in the virtual environment
         bash scripts/setup.sh
     env:
@@ -30,7 +33,6 @@ steps:
       - 'PYTHONUNBUFFERED=1'
       - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account.json'
       - 'VIRTUAL_ENV=/workspace/venv'
-      - 'PATH=/workspace/venv/bin:${PATH}'
     id: 'run-setup'
 
 timeout: '1800s'  # 30 minutes
