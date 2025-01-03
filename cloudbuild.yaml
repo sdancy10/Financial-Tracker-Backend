@@ -12,12 +12,25 @@ steps:
   # Run setup.sh using google/cloud-sdk image which has both Python and gcloud
   - name: 'google/cloud-sdk:latest'
     entrypoint: 'bash'
-    args: ['scripts/setup.sh']
+    args:
+      - '-c'
+      - |
+        # Install python3-venv
+        apt-get update && apt-get install -y python3-venv
+
+        # Create and activate virtual environment
+        python3 -m venv /workspace/venv
+        . /workspace/venv/bin/activate
+
+        # Now run setup.sh in the virtual environment
+        bash scripts/setup.sh
     env:
       - 'CLOUD_BUILD=1'
       - 'NON_INTERACTIVE=1'
       - 'PYTHONUNBUFFERED=1'
       - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account.json'
+      - 'VIRTUAL_ENV=/workspace/venv'
+      - 'PATH=/workspace/venv/bin:${PATH}'
     id: 'run-setup'
 
 timeout: '1800s'  # 30 minutes
