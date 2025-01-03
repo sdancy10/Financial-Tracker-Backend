@@ -64,7 +64,9 @@ if ! command -v terraform &> /dev/null; then
             USE_TERRAFORM=0
         else
             echo "Cleaning up any existing Terraform files..."
-            rm -rf terraform terraform_*
+            # Only remove existing terraform binary/directory, not the zip
+            rm -rf terraform
+            rm -f terraform_*.exe
             
             echo "Unzipping Terraform..."
             # Force overwrite without prompting

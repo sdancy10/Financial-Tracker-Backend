@@ -66,9 +66,10 @@ if %ERRORLEVEL% NEQ 0 (
         )
 
         echo Cleaning up any existing Terraform files...
+        REM Only remove existing terraform binary/directory, not the zip
         if exist "terraform" rmdir /S /Q terraform
         if exist "terraform.exe" del /F /Q terraform.exe
-        for /f %%i in ('dir /b terraform_* 2^>nul') do del /F /Q "%%i"
+        for /f %%i in ('dir /b terraform_*.exe 2^>nul') do del /F /Q "%%i"
 
         echo Unzipping Terraform...
         powershell -Command "$ProgressPreference = 'SilentlyContinue'; Expand-Archive -Path terraform.zip -DestinationPath . -Force"
