@@ -15,11 +15,14 @@ class StorageDeployer:
         # Initialize configuration
         self.config = Config()
         self.project_id = self.config.get('project', 'id')
+        self.logger.info(f"Using project ID: {self.project_id}")
         
         # Get bucket names from config
         storage_config = self.config.get('storage', 'buckets')
+        self.logger.info(f"Raw storage config: {storage_config}")
         self.data_bucket = storage_config.get('data')
         self.ml_bucket = storage_config.get('ml_artifacts')
+        self.logger.info(f"Configured bucket names - data: '{self.data_bucket}', ml_artifacts: '{self.ml_bucket}'")
         
         # Initialize client
         self.storage_client = storage.Client()
@@ -79,7 +82,10 @@ class StorageDeployer:
         """Deploy required storage buckets"""
         try:
             buckets = [self.data_bucket, self.ml_bucket]
+            self.logger.info(f"Attempting to deploy buckets: {buckets}")
+            
             for bucket_name in buckets:
+                self.logger.info(f"Processing bucket: '{bucket_name}'")
                 # Check if bucket is managed by Terraform
                 if self.is_terraform_managed:
                     tf_bucket = self._get_terraform_bucket(bucket_name)

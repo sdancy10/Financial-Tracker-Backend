@@ -15,9 +15,9 @@ features:
 
 storage:
   buckets:
-    data: YOUR_DATA_BUCKET
-    ml_artifacts: YOUR_ML_ARTIFACTS_BUCKET
-    functions: YOUR_FUNCTIONS_BUCKET
+    data: YOUR_PROJECT_ID-data
+    ml_artifacts: YOUR_PROJECT_ID-ml-artifacts
+    functions: YOUR_PROJECT_ID-functions
   location: "us-central1"
 
 cloud_function:
@@ -27,9 +27,9 @@ cloud_function:
   entry_point: process_transactions
   source_path: gs://${PROJECT_ID}-functions/function-code.zip
   environment_variables:
-    GOOGLE_CLOUD_PROJECT: ${project.id}
-    CONFIG_PATH: "config.yaml"
-    ENVIRONMENT: ${project.use_free_tier ? "free_tier" : "standard"}
+    GOOGLE_CLOUD_PROJECT: project.id
+    CONFIG_PATH: config.yaml
+    ENVIRONMENT: project.tier
   exclude_patterns:
     - sample_code/
     - tests/

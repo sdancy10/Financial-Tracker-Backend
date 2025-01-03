@@ -206,13 +206,13 @@ def main():
     gmail_service = get_gmail_service("sdancy.10@gmail.com")
     
     # Test specific message IDs
-    message_ids = ["19425b82e9c7e9d0"]
+    message_ids = ["1942a6a83abbf97b"]
     # messages = get_recent_messages(gmail_service, message_ids)
     
     # # Analyze each message
     # for msg in messages:
     #     analyze_message(msg['id'], gmail_service)
-    analyze_message("19425b82e9c7e9d0", gmail_service)
+    analyze_message("1942a6a83abbf97b", gmail_service)
 
 if __name__ == "__main__":
     main() 

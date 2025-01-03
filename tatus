@@ -1,0 +1,5 @@
+[33mcommit df7d2741ed1afaa4b26460679160190fd6e44624[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: unknown <sdancy.10@gmail.com>
+Date:   Fri Jan 3 00:31:07 2025 -0500
+
+    feat: integrate terraform with deployment scripts and update documentation

@@ -123,10 +123,7 @@ resource "google_cloudfunctions_function" "transaction_processor" {
     resource   = google_pubsub_topic.transaction_topic[0].name
   }
 
-  environment_variables = {
-    for key, value in local.config.cloud_function.environment_variables:
-    key => replace(replace(value, "${project.id}", local.config.project.id), "${project.use_free_tier ? \"free_tier\" : \"standard\"}", local.use_free_tier ? "free_tier" : "standard")
-  }
+  environment_variables = local.processed_env_vars
 
   depends_on = [
     google_project_service.required_apis

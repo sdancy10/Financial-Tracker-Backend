@@ -153,6 +153,13 @@ class TransactionParser:
             'vendor': r'(?s)(?<=\sat\s)(.*?)(?=\s+was)',
             'date': ''
         },
+        'US Bank - Credit Card': {
+            'iterate_results': False,
+            'account': r'(?<=card ending in )\d{4}',
+            'amount': r'(?<=charged \$)(.*)(?=  at)',
+            'vendor': r'(?<=at )(.*)(?=\. A)',
+            'date': ''
+        },
         'Chase Payment Sent': {
             'iterate_results': False,
             # capture the 4 digits after "...":
@@ -251,13 +258,6 @@ class TransactionParser:
             'account': r'(?<=ending in )(\d*)(?=.)',
             'amount': r'(?<=charge of \(\$...\) )(.*)(?= at (.*) on)',
             'vendor': r'(?<=at )(.*)(?= has)',
-            'date': ''
-        },
-        'US Bank - Credit Card': {
-            'iterate_results': False,
-            'account': r'(?<=card ending in )[\d]{4}',
-            'amount': r'(?<=charged \$)(.*)(?=  at)',
-            'vendor': r'(?<=at )(.*)(?=. A)',
             'date': ''
         },
         'Capital One Credit Card': {
