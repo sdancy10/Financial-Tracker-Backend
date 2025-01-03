@@ -362,18 +362,23 @@ ensure_venv
 # Debug: Check if GOOGLE_APPLICATION_CREDENTIALS is set
 if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
     echo "[DEBUG] Found GOOGLE_APPLICATION_CREDENTIALS set to: $GOOGLE_APPLICATION_CREDENTIALS"
-    # Get absolute path for credentials
-    ABSOLUTE_CREDS_PATH="$CURRENT_DIR/$GOOGLE_APPLICATION_CREDENTIALS"
-    echo "[DEBUG] Using absolute path for credentials: $ABSOLUTE_CREDS_PATH"
+    # Get absolute path for credentials without double /workspace
+    ABSOLUTE_CREDS_PATH="$GOOGLE_APPLICATION_CREDENTIALS"
+    echo "[DEBUG] Using credentials path: $ABSOLUTE_CREDS_PATH"
     
     # Check if the file exists
     if [ ! -f "$ABSOLUTE_CREDS_PATH" ]; then
         echo "[DEBUG] Service account key file not found at: $ABSOLUTE_CREDS_PATH"
-        echo "[DEBUG] Directory contents:"
-        ls -la "$(dirname "$ABSOLUTE_CREDS_PATH")"
+        echo "[DEBUG] Current directory: $(pwd)"
+        echo "[DEBUG] Directory contents of $(dirname "$ABSOLUTE_CREDS_PATH"):"
+        ls -la "$(dirname "$ABSOLUTE_CREDS_PATH")" || echo "Directory not found"
+        echo "[DEBUG] Contents of /workspace:"
+        ls -la /workspace
         echo "[DEBUG] Falling back to application default credentials"
     else
         echo "[DEBUG] Service account key file found and readable"
+        echo "[DEBUG] File permissions:"
+        ls -l "$ABSOLUTE_CREDS_PATH"
     fi
 fi
 
