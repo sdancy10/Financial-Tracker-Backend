@@ -10,7 +10,7 @@ locals {
   config_parsed_for_id = yamldecode(local.raw_yaml)
 
   # Decide tier
-  use_free_tier2 = try(local.config_parsed_for_id.project.use_free_tier, false)
+  use_free_tier2 = try(local.config_parsed_for_id.features.use_free_tier, false)
   tier_string    = local.use_free_tier2 ? "free_tier" : "standard"
 
   # Replace %PROJECT_ID% and %PROJECT_TIER% in the raw YAML
@@ -18,7 +18,7 @@ locals {
     replace(
       local.raw_yaml,
       "%PROJECT_ID%",
-      local.config_parsed_for_id.project.id
+      local.config_parsed_for_id.gcp.project_id
     ),
     "%PROJECT_TIER%",
     local.tier_string
@@ -41,7 +41,7 @@ locals {
       replace(
         value,
         "%PROJECT_ID%",
-        local.config.project.id
+        local.config.gcp.project_id
       ),
       "%PROJECT_TIER%",
       local.tier_string
