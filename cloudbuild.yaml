@@ -10,50 +10,13 @@ steps:
         gcloud auth activate-service-account --key-file=/workspace/service-account-key.json
     secretEnv: ['SERVICE_ACCOUNT_KEY']
 
-  # Install dependencies
-  - name: 'python:3.11'
-    entrypoint: pip
-    args: ['install', '-r', 'requirements.txt', '-t', '.']
-
-  # Run tests
-  - name: 'python:3.11'
-    entrypoint: python
-    args: ['-m', 'pytest', 'tests/']
+  # Run setup.sh
+  - name: 'bash'
+    entrypoint: 'bash'
+    args: ['scripts/setup.sh']
     env:
-      - 'PYTHONPATH=.'
-      - 'GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
-      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
-
-  # Set up Terraform
-  - name: 'hashicorp/terraform:1.7'
-    entrypoint: 'sh'
-    args: 
-      - '-c'
-      - |
-        cd terraform
-        terraform init
-        terraform apply -auto-approve
-    env:
-      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
-
-  # Deploy Cloud Functions
-  - name: 'python:3.11'
-    entrypoint: python
-    args: ['scripts/deploy_functions.py']
-    env:
-      - 'PYTHONPATH=.'
-      - 'GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
-      - 'REGION=${_REGION}'
-      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
-
-  # Deploy Cloud Scheduler jobs
-  - name: 'python:3.11'
-    entrypoint: python
-    args: ['scripts/deploy_scheduler.py']
-    env:
-      - 'PYTHONPATH=.'
-      - 'GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
-      - 'REGION=${_REGION}'
+      - 'CLOUD_BUILD=1'
+      - 'PYTHONPATH=/workspace'
       - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
 
 timeout: '1800s'  # 30 minutes
