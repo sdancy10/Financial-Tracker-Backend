@@ -31,12 +31,15 @@ steps:
         sed -i "s/YOUR_PROJECT_ID/${_PROJECT_ID}/g" /workspace/config.yaml
         sed -i "s/YOUR_REGION/${_REGION}/g" /workspace/config.yaml
         
-        # Install required packages
-        apt-get update && apt-get install -y python3-venv wget unzip terraform
+        # Install required system packages
+        apt-get update && apt-get install -y python3-venv wget unzip terraform python3-pip
 
         # Create and activate virtual environment
         python3 -m venv /workspace/venv
         . /workspace/venv/bin/activate
+
+        # Install Python requirements in the virtual environment
+        pip install --require-virtualenv -r requirements.txt
 
         # Set PATH to include venv before running setup.sh
         export PATH="/workspace/venv/bin:$$PATH"

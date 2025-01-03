@@ -33,11 +33,15 @@ echo "[DEBUG] CURRENT_DIR: $CURRENT_DIR"
 export PYTHONPATH="$CURRENT_DIR:$PYTHONPATH"
 echo "[DEBUG] Updated PYTHONPATH: $PYTHONPATH"
 
-# Install pyyaml if needed
-echo "[DEBUG] Installing Python dependencies..."
-echo "Installing required Python packages..."
-pip install pyyaml --quiet
-echo "[DEBUG] pip install result: $?"
+# Install Python dependencies (skip in Cloud Build)
+if [ -n "$CLOUD_BUILD" ]; then
+    echo "[DEBUG] Skipping Python package installation in Cloud Build environment (handled by cloudbuild.yaml)"
+else
+    echo "[DEBUG] Installing Python dependencies..."
+    echo "Installing required Python packages..."
+    pip install pyyaml --quiet
+    echo "[DEBUG] pip install result: $?"
+fi
 
 # Read project configuration from config.yaml
 echo "[DEBUG] Reading project configuration..."
