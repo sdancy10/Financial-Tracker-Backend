@@ -21,7 +21,7 @@ locals {
   # Service account configurations
   service_accounts = {
     cloud_build = "${data.google_project.project.number}@cloudbuild.gserviceaccount.com"
-    app_engine  = "${local.config.project.id}@appspot.gserviceaccount.com"
+    app_engine  = "${local.config.gcp.project_id}@appspot.gserviceaccount.com"
   }
 
   # Map of APIs to their feature flags
@@ -72,7 +72,7 @@ locals {
       location = "US"  # Multi-region US for free tier
       lifecycle_age = 30  # Auto-delete after 30 days
     } : {
-      location = local.config.project.region
+      location = local.config.gcp.region
       lifecycle_age = null  # No auto-deletion
     }
   }
@@ -147,7 +147,7 @@ resource "google_cloud_scheduler_job" "transaction_scheduler" {
   description      = "Triggers transaction processing on a schedule"
   schedule         = local.resource_config.cloud_function.schedule
   time_zone        = local.config.scheduler.transaction_sync.timezone
-  attempt_deadline = "${local.resource_config.cloud_function.timeout}s"
+  attempt_deadline = "${local.config.cloud_function.timeout}s"
 
   retry_config {
     retry_count = local.resource_config.cloud_function.retries
