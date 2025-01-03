@@ -1,6 +1,14 @@
 @echo off
 setlocal EnableDelayedExpansion
 
+REM Check if running in Cloud Build
+if defined CLOUD_BUILD (
+    echo Running in Cloud Build environment
+    set "NON_INTERACTIVE=1"
+) else (
+    set "NON_INTERACTIVE=0"
+)
+
 REM Get the current directory
 set "CURRENT_DIR=%CD%"
 echo Current directory is: %CURRENT_DIR%
@@ -287,24 +295,25 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-echo.
-echo Would you like to apply these changes?
-echo [1] Yes, apply the changes
-echo [2] No, skip Terraform changes
-echo.
-choice /C 12 /N /M "Enter your choice (1-2): "
-set APPLY_CHOICE=!ERRORLEVEL!
-
-if "!APPLY_CHOICE!"=="1" (
-    echo Applying Terraform changes...
+REM Modify the Terraform apply section to use non-interactive mode
+if "%NON_INTERACTIVE%"=="1" (
+    echo Running in non-interactive mode, applying Terraform changes automatically...
     terraform apply -auto-approve
-    if !ERRORLEVEL! NEQ 0 (
-        echo Error: Failed to apply Terraform changes.
-        exit /b 1
-    )
-    echo Terraform changes applied successfully.
 ) else (
-    echo Skipping Terraform changes.
+    echo.
+    echo Would you like to apply these changes?
+    echo [1] Yes, apply the changes
+    echo [2] No, skip Terraform changes
+    echo.
+    choice /C 12 /N /M "Enter your choice (1-2): "
+    set APPLY_CHOICE=!ERRORLEVEL!
+
+    if "!APPLY_CHOICE!"=="1" (
+        echo Applying Terraform changes...
+        terraform apply -auto-approve
+    ) else (
+        echo Skipping Terraform changes.
+    )
 )
 
 cd ..

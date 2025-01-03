@@ -1,8 +1,68 @@
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-gcloud services enable \
-    aiplatform.googleapis.com \
-    storage.googleapis.com \
-    containerregistry.googleapis.com
-gcloud projects add-iam-policy-binding $GOOGLE_CLOUD_PROJECT \
-    --member="serviceAccount:$GOOGLE_CLOUD_PROJECT@appspot.gserviceaccount.com" \
-    --role="roles/aiplatform.user"
+steps:
+  # Get service account key from Secret Manager
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "$$SERVICE_ACCOUNT_KEY" > /workspace/service-account-key.json
+        echo "Activating service account..."
+        gcloud auth activate-service-account --key-file=/workspace/service-account-key.json
+    secretEnv: ['SERVICE_ACCOUNT_KEY']
+
+  # Install dependencies
+  - name: 'python:3.11'
+    entrypoint: pip
+    args: ['install', '-r', 'requirements.txt', '-t', '.']
+
+  # Run tests
+  - name: 'python:3.11'
+    entrypoint: python
+    args: ['-m', 'pytest', 'tests/']
+    env:
+      - 'PYTHONPATH=.'
+      - 'GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
+      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
+
+  # Set up Terraform
+  - name: 'hashicorp/terraform:1.7'
+    entrypoint: 'sh'
+    args: 
+      - '-c'
+      - |
+        cd terraform
+        terraform init
+        terraform apply -auto-approve
+    env:
+      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
+
+  # Deploy Cloud Functions
+  - name: 'python:3.11'
+    entrypoint: python
+    args: ['scripts/deploy_functions.py']
+    env:
+      - 'PYTHONPATH=.'
+      - 'GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
+      - 'REGION=${_REGION}'
+      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
+
+  # Deploy Cloud Scheduler jobs
+  - name: 'python:3.11'
+    entrypoint: python
+    args: ['scripts/deploy_scheduler.py']
+    env:
+      - 'PYTHONPATH=.'
+      - 'GOOGLE_CLOUD_PROJECT=${_PROJECT_ID}'
+      - 'REGION=${_REGION}'
+      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account-key.json'
+
+timeout: '1800s'  # 30 minutes
+
+substitutions:
+  _PROJECT_ID: shanedancy-9f2a3  # Default value, can be overridden
+  _REGION: us-central1  # Default value, can be overridden
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/${_PROJECT_ID}/secrets/service-account-key/versions/latest
+      env: 'SERVICE_ACCOUNT_KEY'

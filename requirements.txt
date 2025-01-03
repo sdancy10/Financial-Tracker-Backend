@@ -49,3 +49,6 @@ backoff==2.2.1
 
 # TZData dependencies
 tzdata==2023.3
+
+# Google Cloud Build dependencies
+google-cloud-build>=3.0.0

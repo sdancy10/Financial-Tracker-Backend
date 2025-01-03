@@ -24,7 +24,7 @@ locals {
     "cloudfunctions.googleapis.com": local.enabled_services.cloud_functions,
     "storage.googleapis.com": local.enabled_services.storage,
     "containerregistry.googleapis.com": local.enabled_services.cloud_api || local.enabled_services.cloud_functions,
-    "cloudbuild.googleapis.com": local.enabled_services.cloud_api || local.enabled_services.cloud_functions,
+    "cloudbuild.googleapis.com": local.enabled_services.cloud_api || local.enabled_services.cloud_functions || local.enabled_services.cloud_build,
     "pubsub.googleapis.com": local.enabled_services.pubsub,
     "firestore.googleapis.com": local.enabled_services.firestore,
     "secretmanager.googleapis.com": local.enabled_services.secrets,
@@ -254,6 +254,33 @@ resource "google_secret_manager_secret" "firebase_credentials" {
   ]
 }
 
+# Cloud Build Trigger
+resource "google_cloudbuild_trigger" "auto_deploy" {
+  count = local.enabled_services.cloud_build ? 1 : 0  # Only create if cloud_build is enabled
+  
+  name        = "auto-deploy-trigger"
+  description = "Trigger auto-deployment on main branch pushes"
+  
+  github {
+    owner = "sdancy10"
+    name  = "Financial-Tracker-Backend"
+    push {
+      branch = "^main$"
+    }
+  }
+
+  filename = "cloudbuild.yaml"
+  
+  substitutions = {
+    _PROJECT_ID = local.config.project.id
+    _REGION     = local.config.project.region
+  }
+
+  depends_on = [
+    google_project_service.required_apis
+  ]
+}
+
 # Output values
 output "function_url" {
   value = local.enabled_services.cloud_functions ? google_cloudfunctions_function.transaction_processor[0].https_trigger_url : null
@@ -273,4 +300,48 @@ output "ml_artifacts_bucket" {
 output "functions_bucket" {
   value = local.enabled_services.cloud_functions ? google_storage_bucket.functions_bucket[0].name : null
   description = "Name of the functions storage bucket"
+}
+
+# Secret for Cloud Build service account
+resource "google_secret_manager_secret" "cloud_build_sa_key" {
+  count = local.enabled_services.cloud_build ? 1 : 0
+  
+  secret_id = "service-account-key"
+
+  replication {
+    user_managed {
+      replicas {
+        location = local.config.project.region
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_service.required_apis
+  ]
+}
+
+# IAM for Cloud Build
+resource "google_project_iam_member" "cloud_build_sa" {
+  count = local.enabled_services.cloud_build ? 1 : 0
+  
+  project = local.config.project.id
+  role    = "roles/cloudbuild.builds.builder"
+  member  = "serviceAccount:${local.config.project.id}@appspot.gserviceaccount.com"
+
+  depends_on = [
+    google_project_service.required_apis["cloudbuild.googleapis.com"]
+  ]
+}
+
+resource "google_project_iam_member" "cloud_build_terraform" {
+  count = local.enabled_services.cloud_build ? 1 : 0
+  
+  project = local.config.project.id
+  role    = "roles/editor"  # Needs broad permissions to create resources
+  member  = "serviceAccount:${local.config.project.id}@appspot.gserviceaccount.com"
+
+  depends_on = [
+    google_project_service.required_apis["cloudbuild.googleapis.com"]
+  ]
 } 

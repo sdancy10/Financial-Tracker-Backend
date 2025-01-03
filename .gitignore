@@ -46,4 +46,5 @@ override.tf.json
 .terraformrc
 terraform.rc
 auth_output.tmp
-config_output.tmp 
+config_output.tmp
+*.tmp 
