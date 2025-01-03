@@ -18,6 +18,12 @@ locals {
     secrets: true
   })
 
+  # Service account configurations
+  service_accounts = {
+    cloud_build = "${data.google_project.project.number}@cloudbuild.gserviceaccount.com"
+    app_engine  = "${local.config.project.id}@appspot.gserviceaccount.com"
+  }
+
   # Map of APIs to their feature flags
   api_service_map = {
     "cloudrun.googleapis.com": local.enabled_services.cloud_api,
@@ -71,6 +77,9 @@ locals {
     }
   }
 }
+
+# Get project data
+data "google_project" "project" {}
 
 # Enable required APIs
 resource "google_project_service" "required_apis" {
@@ -327,7 +336,7 @@ resource "google_project_iam_member" "cloud_build_sa" {
   
   project = local.config.project.id
   role    = "roles/cloudbuild.builds.builder"
-  member  = "serviceAccount:${local.config.project.id}@appspot.gserviceaccount.com"
+  member  = "serviceAccount:${local.service_accounts.cloud_build}"
 
   depends_on = [
     google_project_service.required_apis["cloudbuild.googleapis.com"]
@@ -339,7 +348,20 @@ resource "google_project_iam_member" "cloud_build_terraform" {
   
   project = local.config.project.id
   role    = "roles/editor"  # Needs broad permissions to create resources
-  member  = "serviceAccount:${local.config.project.id}@appspot.gserviceaccount.com"
+  member  = "serviceAccount:${local.service_accounts.cloud_build}"
+
+  depends_on = [
+    google_project_service.required_apis["cloudbuild.googleapis.com"]
+  ]
+}
+
+# Add Secret Manager access for Cloud Build
+resource "google_project_iam_member" "cloud_build_secret_accessor" {
+  count = local.enabled_services.cloud_build ? 1 : 0
+  
+  project = local.config.project.id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${local.service_accounts.cloud_build}"
 
   depends_on = [
     google_project_service.required_apis["cloudbuild.googleapis.com"]
