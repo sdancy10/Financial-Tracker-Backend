@@ -33,11 +33,34 @@ echo "[DEBUG] CURRENT_DIR: $CURRENT_DIR"
 export PYTHONPATH="$CURRENT_DIR:$PYTHONPATH"
 echo "[DEBUG] Updated PYTHONPATH: $PYTHONPATH"
 
+# Function to ensure virtual environment is activated
+ensure_venv() {
+    if [ -n "$CLOUD_BUILD" ] && [ -z "$VIRTUAL_ENV" ]; then
+        echo "[DEBUG] Virtual environment not active, reactivating..."
+        source /workspace/venv/bin/activate
+        echo "[DEBUG] Virtual environment reactivated, Python path: $(which python3)"
+    fi
+}
+
 # Activate virtual environment in Cloud Build
 if [ -n "$CLOUD_BUILD" ]; then
+    echo "[DEBUG] Checking for virtual environment..."
+    if [ ! -f "/workspace/venv/bin/activate" ]; then
+        echo "[ERROR] Virtual environment not found at /workspace/venv"
+        echo "[DEBUG] Contents of /workspace:"
+        ls -la /workspace
+        echo "[DEBUG] Contents of /workspace/venv (if exists):"
+        ls -la /workspace/venv || echo "venv directory not found"
+        exit 1
+    fi
     echo "[DEBUG] Activating virtual environment in Cloud Build..."
     source /workspace/venv/bin/activate
+    if [ $? -ne 0 ]; then
+        echo "[ERROR] Failed to activate virtual environment"
+        exit 1
+    fi
     echo "[DEBUG] Virtual environment activated, Python path: $(which python3)"
+    echo "[DEBUG] Python version: $(python3 --version)"
 fi
 
 # Install Python dependencies (skip in Cloud Build)
@@ -52,6 +75,9 @@ fi
 
 # Read project configuration from config.yaml
 echo "[DEBUG] Reading project configuration..."
+ensure_venv
+
+# Create temporary Python script for config reading
 echo "[DEBUG] Creating temporary Python script for config reading..."
 echo "import yaml" > read_config.py
 echo "with open('config.yaml', 'r') as f:" >> read_config.py
@@ -331,9 +357,7 @@ echo
 
 # Initialize Terraform
 echo "[DEBUG] Starting Terraform initialization..."
-echo "[DEBUG] Current directory: $(pwd)"
-echo "[DEBUG] Directory contents:"
-ls -la
+ensure_venv
 
 # Debug: Check if GOOGLE_APPLICATION_CREDENTIALS is set
 if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
