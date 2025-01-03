@@ -10,6 +10,16 @@ steps:
         gcloud auth activate-service-account --key-file=/workspace/service-account-key.json
     secretEnv: ['SERVICE_ACCOUNT_KEY']
 
+  # Create config.yaml from example
+  - name: 'bash'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        cp config.yaml.example config.yaml
+        sed -i "s/YOUR_PROJECT_ID/${_PROJECT_ID}/g" config.yaml
+        sed -i "s/YOUR_REGION/${_REGION}/g" config.yaml
+
   # Run setup.sh
   - name: 'python:3.10'
     entrypoint: 'bash'
