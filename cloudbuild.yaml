@@ -16,8 +16,12 @@ steps:
       - '-c'
       - |
         # Debug: List files in workspace
-        echo "Contents of /workspace:"
+        echo "Contents of /workspace before any operations:"
         ls -la /workspace
+        echo
+        echo "Contents of /workspace/terraform (if it exists):"
+        ls -la /workspace/terraform || echo "terraform directory not found"
+        echo
         
         # Create config.yaml from example
         echo "Creating config.yaml from example..."
@@ -28,7 +32,7 @@ steps:
         sed -i "s/YOUR_REGION/${_REGION}/g" /workspace/config.yaml
         
         # Install required packages
-        apt-get update && apt-get install -y python3-venv wget unzip
+        apt-get update && apt-get install -y python3-venv wget unzip terraform
 
         # Create and activate virtual environment
         python3 -m venv /workspace/venv
@@ -37,14 +41,23 @@ steps:
         # Set PATH to include venv before running setup.sh
         export PATH="/workspace/venv/bin:$$PATH"
 
+        # Set region in gcloud config
+        gcloud config set compute/region ${_REGION}
+
+        # Debug: Check terraform directory again before running setup.sh
+        echo
+        echo "Contents of /workspace/terraform before running setup.sh:"
+        ls -la /workspace/terraform || echo "terraform directory not found"
+        echo
+
         # Now run setup.sh in the virtual environment
         cd /workspace
+        export GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account.json
         bash scripts/setup.sh
     env:
       - 'CLOUD_BUILD=1'
       - 'NON_INTERACTIVE=1'
       - 'PYTHONUNBUFFERED=1'
-      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account.json'
       - 'VIRTUAL_ENV=/workspace/venv'
     id: 'run-setup'
 
