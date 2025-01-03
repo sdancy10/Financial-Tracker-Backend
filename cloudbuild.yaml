@@ -72,7 +72,7 @@ steps:
         
         # Verify virtual environment
         echo "[DEBUG] Virtual environment verification:"
-        echo "Virtual environment created at: $VIRTUAL_ENV"
+        echo "Virtual environment created at: $$VIRTUAL_ENV"
         echo "Using Python: $(which python3)"
         echo "Python version: $(python3 --version)"
         echo "Using pip: $(which pip)"
