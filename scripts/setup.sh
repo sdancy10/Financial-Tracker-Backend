@@ -11,6 +11,155 @@ echo "Current directory is: $CURRENT_DIR"
 export PYTHONPATH="$CURRENT_DIR:$PYTHONPATH"
 echo "Set PYTHONPATH to include current directory: $PYTHONPATH"
 
+# Install pyyaml if needed
+echo "Installing required Python packages..."
+pip install pyyaml --quiet
+
+# Read project configuration from config.yaml
+echo "Reading project configuration..."
+PROJECT_ID=$(python3 -c "
+import yaml
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+print(str(config['gcp']['project_id']).strip())
+")
+
+REGION=$(python3 -c "
+import yaml
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+print(str(config['gcp']['region']).strip())
+")
+
+echo "Using project ID: $PROJECT_ID"
+echo "Using region: $REGION"
+
+# Check if Terraform is installed
+echo "Checking for Terraform installation..."
+if ! command -v terraform &> /dev/null; then
+    echo "Terraform is not installed."
+    echo
+    echo "Options:"
+    echo "[1] Skip Terraform and continue with deployment"
+    echo "[2] Exit and install Terraform manually"
+    echo
+    read -p "Enter your choice (1-2): " TERRAFORM_CHOICE
+    
+    if [ "$TERRAFORM_CHOICE" = "1" ]; then
+        echo "Skipping Terraform installation and continuing with deployment..."
+        USE_TERRAFORM=0
+    else
+        echo "Please install Terraform manually:"
+        echo "1. Download from: https://www.terraform.io/downloads.html"
+        echo "2. Add to your system PATH"
+        echo "3. Run setup.sh again"
+        exit 1
+    fi
+fi
+
+# Check GCP authentication
+echo "[DEBUG] Starting GCP authentication check..."
+echo
+echo "Step 1: Checking user authentication..."
+echo "[DEBUG] Getting active account..."
+
+# Get active account
+ACTIVE_ACCOUNT=$(gcloud auth list --format="value(account)" --filter="status=ACTIVE" 2>/dev/null)
+
+if [ -z "$ACTIVE_ACCOUNT" ]; then
+    echo "No active account found."
+    echo
+    echo "NOTE: The next step will open a browser window for authentication."
+    echo "After authenticating, return to this window to continue."
+    echo
+    read -p "Press Enter to continue..."
+    
+    echo "[DEBUG] Starting user login..."
+    gcloud auth login --no-launch-browser
+    
+    # Verify the login was successful
+    ACTIVE_ACCOUNT=$(gcloud auth list --format="value(account)" --filter="status=ACTIVE" 2>/dev/null)
+    if [ -z "$ACTIVE_ACCOUNT" ]; then
+        echo "Error: Failed to authenticate with GCP."
+        exit 1
+    fi
+    echo "[DEBUG] Successfully authenticated as: $ACTIVE_ACCOUNT"
+    
+    # Set project and region
+    echo "[DEBUG] Setting project and region..."
+    if ! gcloud config set project "$PROJECT_ID"; then
+        echo "Error: Failed to set project."
+        exit 1
+    fi
+    if ! gcloud config set compute/region "$REGION"; then
+        echo "Error: Failed to set region."
+        exit 1
+    fi
+    echo "[DEBUG] Project and region configured successfully."
+else
+    echo "[DEBUG] Using existing authentication for account: $ACTIVE_ACCOUNT"
+    
+    # Verify project and region are set correctly
+    echo "[DEBUG] Verifying project and region configuration..."
+    
+    CURRENT_PROJECT=$(gcloud config get-value project 2>/dev/null)
+    CURRENT_REGION=$(gcloud config get-value compute/region 2>/dev/null)
+    
+    if [ "$CURRENT_PROJECT" != "$PROJECT_ID" ]; then
+        echo "[DEBUG] Setting project to $PROJECT_ID..."
+        if ! gcloud config set project "$PROJECT_ID"; then
+            echo "Error: Failed to set project."
+            exit 1
+        fi
+    fi
+    
+    if [ "$CURRENT_REGION" != "$REGION" ]; then
+        echo "[DEBUG] Setting region to $REGION..."
+        if ! gcloud config set compute/region "$REGION"; then
+            echo "Error: Failed to set region."
+            exit 1
+        fi
+    fi
+fi
+
+echo "[DEBUG] Starting application default credentials check..."
+echo "Step 2: Checking application default credentials..."
+echo "Testing access token retrieval..."
+if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then
+    echo "[DEBUG] No ADC found, entering setup..."
+    echo "No application default credentials found (required for Terraform)."
+    echo
+    echo "NOTE: The next step will open a browser window for authentication."
+    echo "After authenticating, return to this window to continue."
+    echo
+    read -p "Press Enter to continue..."
+    
+    echo "[DEBUG] Starting ADC login..."
+    if ! gcloud auth application-default login --no-launch-browser; then
+        echo
+        echo "Error: Failed to set up application default credentials."
+        exit 1
+    else
+        echo
+        echo "Successfully configured application default credentials."
+    fi
+else
+    echo "[DEBUG] ADC already configured"
+    echo "✓ Application default credentials are already configured."
+    echo "✓ User is authenticated as: $ACTIVE_ACCOUNT"
+fi
+
+echo "[DEBUG] Authentication check complete"
+echo
+echo "Current GCP configuration:"
+echo "------------------------"
+echo "Project:"
+gcloud config get-value project
+echo "Account:"
+gcloud config get-value account
+echo "Region:"
+gcloud config get-value compute/region
+
 # Set test environment variable (to match setup.bat)
 export TEST_ENV=true
 
@@ -145,8 +294,40 @@ fi
 echo "=== Starting Deployment ==="
 echo
 
-# Deploy storage buckets
-echo "Step 1: Deploying storage buckets..."
+# Initialize and apply Terraform if available
+if command -v terraform &> /dev/null; then
+    echo
+    echo "Initializing Terraform..."
+    cd terraform
+    if ! terraform init; then
+        echo "Error: Failed to initialize Terraform"
+        exit 1
+    fi
+    
+    echo
+    echo "Showing planned changes..."
+    terraform plan
+    
+    echo
+    echo "Would you like to apply these changes?"
+    echo "[1] Yes, apply the changes"
+    echo "[2] No, skip Terraform changes"
+    read -p "Enter your choice (1-2): " APPLY_CHOICE
+    
+    if [ "$APPLY_CHOICE" = "1" ]; then
+        if ! terraform apply -auto-approve; then
+            echo "Error: Failed to apply Terraform configuration"
+            exit 1
+        fi
+        echo "Terraform changes applied successfully"
+    else
+        echo "Skipping Terraform changes"
+    fi
+    cd ..
+fi
+
+# Deploy storage buckets (will respect Terraform state)
+echo "Step 2: Deploying storage buckets..."
 python scripts/deploy_storage.py
 if [ $? -ne 0 ]; then
     echo "Error: Failed to deploy storage buckets"

@@ -1,6 +1,6 @@
 # Terraform Infrastructure Configuration
 
-This directory contains the Terraform configurations for deploying the Financial Tracker Backend infrastructure to Google Cloud Platform. It provides two deployment options: production (`main.tf`) and free tier (`free_tier.tf`).
+This directory contains the Terraform configurations for deploying the Financial Tracker Backend infrastructure to Google Cloud Platform.
 
 ## Prerequisites
 
@@ -16,62 +16,52 @@ This directory contains the Terraform configurations for deploying the Financial
 
 3. Make sure your `config.yaml` file is properly configured in the root directory
 
-## Configuration Options
+## Configuration
 
-### Production Configuration (`main.tf`)
-Optimized for production workloads with:
-- Multiple instance support
-- Higher memory allocations
-- More frequent scheduling
-- Longer timeouts
-- No automatic cleanup
+The infrastructure deployment is controlled by the `features` section in your `config.yaml`:
 
-Resource Specifications:
-- Cloud Run: 1-10 instances, 256Mi memory
-- Cloud Functions: 256MB memory, 9-minute timeout
-- Cloud Scheduler: Runs every 10 minutes
-- Storage: No quota limits
-- Pub/Sub: Standard configuration
-- Secret Manager: Multiple secrets
+```yaml
+features:
+  enabled_services:
+    cloud_run: false      # Cloud Run API and services
+    cloud_functions: true # Cloud Functions API and services
+    storage: true        # Cloud Storage API and buckets
+    pubsub: true        # Pub/Sub API and topics
+    scheduler: true     # Cloud Scheduler API and jobs
+    firestore: true     # Firestore API
+    secrets: true       # Secret Manager API and secrets
+```
 
-### Free Tier Configuration (`free_tier.tf`)
-Optimized to stay within GCP's free tier limits:
+## Resource Configuration
 
-1. **Cloud Run (Free Tier Limits: 2M requests/month, 180K vCPU-sec, 360K GiB-sec)**
-   - Scales to zero when not in use
-   - Single instance maximum
-   - 128Mi memory limit
-   - Suffix: `-free`
+1. **Cloud Functions**
+   - Name: `transaction-processor`
+   - Runtime: Python 3.10
+   - Memory: 256MB
+   - Timeout: 540s
+   - Source: Uploaded from local directory
 
-2. **Cloud Functions (Free Tier: 2M invocations/month)**
-   - 128MB memory (minimum)
-   - 60-second timeout
-   - Suffix: `-free`
-   - Reduced concurrent executions
+2. **Cloud Storage**
+   - Buckets:
+     - Data bucket: For storing processed data
+     - ML artifacts bucket: For machine learning models
+     - Functions bucket: For Cloud Functions code
+   - Location: US-CENTRAL1
+   - Uniform bucket-level access: Enabled
 
-3. **Cloud Storage (Free Tier: 5GB/month)**
-   - 1GB quota per bucket
-   - Files auto-delete after 1 day
-   - Suffix: `-free`
+3. **Cloud Scheduler**
+   - Job name: `process-scheduled-transactions`
+   - Schedule: Every 10 minutes
+   - Timezone: America/Chicago
+   - Retry policy: 3 attempts
+   - Timeout: 540s
 
-4. **Cloud Scheduler**
-   - Runs every 12 hours (vs 10 minutes in production)
-   - Single retry
-   - 60-second timeout
-   - Suffix: `-free`
-
-5. **Pub/Sub (Free Tier: 10GB/month)**
-   - Minimal message size
-   - Suffix: `-free`
-
-6. **Secret Manager (Free Tier: 10K operations)**
-   - Minimal secrets
-   - Suffix: `-free`
-
-7. **Budget Controls**
-   - $1 maximum budget
-   - Alerts at 50 cents and 90 cents
-   - Automatic notifications
+4. **Secret Manager**
+   - Secrets:
+     - Default credentials
+     - Firebase credentials
+   - Automatic replication
+   - Customer-managed encryption keys
 
 ## Usage
 
@@ -90,69 +80,81 @@ Optimized to stay within GCP's free tier limits:
    terraform validate
    ```
 
-3. **Deploy Production**:
+3. **Plan Changes**:
    ```bash
    # See what changes will be made
    terraform plan
-
-   # Apply the changes
-   terraform apply
    ```
 
-4. **Deploy Free Tier**:
+4. **Apply Changes**:
    ```bash
-   # Plan free tier changes only
-   terraform plan -target=module.free_tier
-
-   # Apply free tier configuration
-   terraform apply -target=module.free_tier
+   # Apply the changes
+   terraform apply
    ```
 
 5. **Clean Up**:
    ```bash
    # Remove all resources
    terraform destroy
-
-   # Remove only free tier resources
-   terraform destroy -target=module.free_tier
    ```
 
-## Resource Comparison
+## Managing Existing Resources
 
-| Resource          | Production (`main.tf`)      | Free Tier (`free_tier.tf`)    |
-|------------------|----------------------------|------------------------------|
-| Cloud Run        | 1-10 instances, 256Mi     | 0-1 instances, 128Mi        |
-| Cloud Functions  | 256MB, 9m timeout         | 128MB, 1m timeout           |
-| Cloud Scheduler  | Every 10 minutes          | Every 12 hours              |
-| Storage         | No quota limits           | 1GB per bucket              |
-| File Retention   | Permanent                 | 1-day auto-delete           |
-| Pub/Sub         | Standard config           | Minimal message size        |
-| Secret Manager  | Multiple secrets          | Single secret              |
+If you have existing resources that were created manually or through scripts:
+
+1. **Import Resources**:
+   ```bash
+   # Import Cloud Function
+   terraform import "google_cloudfunctions_function.transaction_processor[0]" "projects/YOUR_PROJECT_ID/locations/us-central1/functions/transaction-processor"
+
+   # Import Storage Buckets
+   terraform import "google_storage_bucket.data_bucket[0]" "YOUR_PROJECT_ID-data"
+   terraform import "google_storage_bucket.ml_artifacts_bucket[0]" "YOUR_PROJECT_ID-ml-artifacts"
+   terraform import "google_storage_bucket.functions_bucket[0]" "YOUR_PROJECT_ID-functions"
+
+   # Import Pub/Sub Topic
+   terraform import "google_pubsub_topic.scheduled_transactions[0]" "projects/YOUR_PROJECT_ID/topics/scheduled-transactions"
+
+   # Import Cloud Scheduler Job
+   terraform import "google_cloud_scheduler_job.transaction_scheduler[0]" "projects/YOUR_PROJECT_ID/locations/us-central1/jobs/process-scheduled-transactions"
+
+   # Import Secrets
+   terraform import "google_secret_manager_secret.default_credentials[0]" "projects/YOUR_PROJECT_ID/secrets/google-credentials-default"
+   terraform import "google_secret_manager_secret.firebase_credentials[0]" "projects/YOUR_PROJECT_ID/secrets/firebase-credentials-default"
+   ```
+
+2. **Remove from State**:
+   ```bash
+   # Remove resource from state if needed
+   terraform state rm [resource_address]
+   ```
+
+## Integration with Setup Scripts
+
+The setup scripts (`setup.bat` and `setup.sh`) will:
+1. Check for Terraform installation
+2. Initialize Terraform if available
+3. Plan and apply changes with user confirmation
+4. Handle application deployment after infrastructure is ready
 
 ## Important Notes
 
-1. **Free Tier Limitations**:
-   - Suitable for development/testing
-   - Limited processing capacity
-   - Data auto-cleanup
-   - Reduced functionality
+1. **State Management**:
+   - Keep `terraform.tfstate` secure
+   - Consider using remote state storage
+   - Don't commit state files to version control
 
-2. **Cost Management**:
-   - Free tier has strict budget controls
-   - Production needs separate budget setup
-   - Monitor usage regularly
+2. **Resource Naming**:
+   - Resources use project ID in names
+   - Names are consistent with existing resources
+   - Follow GCP naming conventions
 
-3. **Deployment Considerations**:
-   - Don't run both configurations simultaneously
-   - Use different project IDs for prod/free
-   - Test thoroughly before production
+3. **Security**:
+   - Use service account authentication
+   - Enable audit logging
+   - Follow least privilege principle
 
-4. **Security**:
-   - Both configs use same security settings
-   - IAM permissions are identical
-   - Encryption remains enabled
-
-5. **Maintenance**:
-   - Free tier requires less maintenance
-   - Auto-cleanup reduces manual work
-   - Monitoring still recommended 
+4. **Cost Management**:
+   - Monitor resource usage
+   - Set up budget alerts
+   - Clean up unused resources 

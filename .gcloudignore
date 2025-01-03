@@ -9,4 +9,26 @@ __pycache__/
 venv/
 .idea/
 .vscode/
-tests/ 
+tests/
+
+# Terraform files
+terraform/
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars.json
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Temporary files
+auth_output.tmp
+config_output.tmp
+temp/
+*.log 

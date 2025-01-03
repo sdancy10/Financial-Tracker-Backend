@@ -6,6 +6,7 @@ This document provides detailed setup and deployment instructions for the Financ
 
 - Python 3.9 or higher
 - Google Cloud SDK
+- Terraform
 - A Google Cloud Project with billing enabled
 - Git (for version control)
 
@@ -43,35 +44,29 @@ See [CREDENTIAL_MANAGEMENT.md](CREDENTIAL_MANAGEMENT.md) for detailed instructio
 - Creating service accounts
 - Managing credentials in GCP Secret Manager
 
-## GCloud CLI Setup (Windows)
+## GCloud CLI and Terraform Setup (Windows)
 
 1. Install Google Cloud SDK:
    - Download from: https://cloud.google.com/sdk/docs/install
    - Run the installer and follow the prompts
    - Restart your terminal/PowerShell after installation
 
-2. Initialize GCloud:
+2. Install Terraform:
+   - Using Chocolatey: `choco install terraform`
+   - Or download from: https://www.terraform.io/downloads.html
+   - Add to your system PATH
+   - Verify installation: `terraform --version`
+
+3. Initialize GCloud and authenticate:
    ```powershell
    # Login to your Google Account
    gcloud auth login
 
+   # Set up application default credentials (required for Terraform)
+   gcloud auth application-default login
+
    # Set your project
    gcloud config set project YOUR_PROJECT_ID
-   ```
-
-3. Enable Required APIs:
-   ```powershell
-   # Enable Secret Manager API
-   gcloud services enable secretmanager.googleapis.com
-
-   # Enable Cloud Storage API
-   gcloud services enable storage.googleapis.com
-
-   # Enable Cloud Functions API
-   gcloud services enable cloudfunctions.googleapis.com
-
-   # Enable Cloud Scheduler API
-   gcloud services enable cloudscheduler.googleapis.com
    ```
 
 4. Create a service account in GCP Console:
@@ -85,42 +80,29 @@ See [CREDENTIAL_MANAGEMENT.md](CREDENTIAL_MANAGEMENT.md) for detailed instructio
      - Cloud Scheduler Admin
    - Create and download key as JSON
 
-5. Add required IAM policies:
-   ```powershell
-   # Add Secret Manager Admin role
-   gcloud projects add-iam-policy-binding YOUR_PROJECT_ID `
-       --member="serviceAccount:python-etl@YOUR_PROJECT_ID.iam.gserviceaccount.com" `
-       --role="roles/secretmanager.admin"
-
-   # Add Storage Admin role
-   gcloud projects add-iam-policy-binding YOUR_PROJECT_ID `
-       --member="serviceAccount:python-etl@YOUR_PROJECT_ID.iam.gserviceaccount.com" `
-       --role="roles/storage.admin"
-
-   # Add Cloud Functions Developer role
-   gcloud projects add-iam-policy-binding YOUR_PROJECT_ID `
-       --member="serviceAccount:python-etl@YOUR_PROJECT_ID.iam.gserviceaccount.com" `
-       --role="roles/cloudfunctions.developer"
-
-   # Add Cloud Scheduler Admin role
-   gcloud projects add-iam-policy-binding YOUR_PROJECT_ID `
-       --member="serviceAccount:python-etl@YOUR_PROJECT_ID.iam.gserviceaccount.com" `
-       --role="roles/cloudscheduler.admin"
-   ```
-
-6. Place the downloaded service account key in:
+5. Place the downloaded service account key in:
    ```
    credentials/service-account-key.json
    ```
 
-7. Create and configure environment files:
-   - Copy `.env.example` to `.env`
-   - Update `.env` with your settings:
-   ```
-   GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
-   GOOGLE_APPLICATION_CREDENTIALS=credentials/service-account-key.json
-   PROJECT_ID=YOUR_PROJECT_ID
-   ENCRYPTION_KEY=YOUR_ENCRYPTION_KEY
+6. Create and configure environment files:
+   - Copy `config.yaml.example` to `config.yaml`
+   - Update configuration with your settings:
+   ```yaml
+   gcp:
+     project_id: "YOUR_PROJECT_ID"
+     region: "YOUR_REGION"
+     service_account_key_path: "credentials/service-account-key.json"
+
+   features:
+     enabled_services:
+       cloud_run: false      # Cloud Run API and services
+       cloud_functions: true # Cloud Functions API and services
+       storage: true        # Cloud Storage API and buckets
+       pubsub: true        # Pub/Sub API and topics
+       scheduler: true     # Cloud Scheduler API and jobs
+       firestore: true     # Firestore API
+       secrets: true       # Secret Manager API and secrets
    ```
 
 ## Project Setup
@@ -144,8 +126,31 @@ See [CREDENTIAL_MANAGEMENT.md](CREDENTIAL_MANAGEMENT.md) for detailed instructio
    The setup script will:
    - Create and activate a virtual environment
    - Install required dependencies
+   - Set up GCP authentication
+   - Initialize and apply Terraform configuration
    - Run configured tests
-   - Deploy necessary cloud resources
+
+## Infrastructure Management
+
+The project uses Terraform to manage infrastructure:
+
+1. **Infrastructure Deployment**:
+   ```bash
+   cd terraform
+   terraform init
+   terraform plan    # Review changes
+   terraform apply   # Apply changes
+   ```
+
+2. **Infrastructure Updates**:
+   - Edit Terraform configurations in `terraform/` directory
+   - Run `terraform plan` to review changes
+   - Run `terraform apply` to apply changes
+
+3. **Feature Management**:
+   - Use `config.yaml` to enable/disable features
+   - Terraform will respect these settings
+   - Changes require re-running `terraform apply`
 
 ## Configuration
 
@@ -161,40 +166,17 @@ testing:
   components:
     unit_tests: true
     package_tests: true
-    config_tests: true
-    integration_tests: true
+    config_tests: false
+    integration_tests: false
   test_paths:
     unit_tests:
-      - "tests/test_transaction_parser.py"
-      - "tests/test_gmail_integration.py"
+      - tests/test_gmail_integration.py
+      - tests/test_transaction_parser.py
     package_tests:
-      - "scripts/test_deployment_package.py"
-    config_tests:
-      - "scripts/test_deployment.py"
-    integration_tests:
-      - "scripts/test_function.py"
+      - scripts/test_deployment_package.py
+    post_deployment:
+      - scripts/test_function.py
 ```
-
-### Deployment Options
-
-The project supports multiple deployment configurations:
-
-1. Function Deployment:
-   - Individual functions can be deployed using `scripts/deploy_functions.py`
-   - Functions are automatically versioned
-   - Supports rollback to previous versions
-
-2. Storage Deployment:
-   - Storage buckets are managed via `scripts/deploy_storage.py`
-   - Supports bucket creation and configuration
-
-3. Credentials Management:
-   - Secure credential deployment via `scripts/deploy_credentials.py`
-   - Supports encryption and secure storage
-
-4. Scheduler Configuration:
-   - Cloud Scheduler jobs can be managed via `scripts/deploy_scheduler.py`
-   - Supports cron-style scheduling
 
 ## Running the Project
 
@@ -204,10 +186,6 @@ The project supports multiple deployment configurations:
    python src/main.py
 
    # Run unit tests
-   python -m pytest tests/test_transaction_parser.py
-   python -m pytest tests/test_gmail_integration.py
-
-   # Run all tests in tests directory
    python -m pytest tests/
    ```
 
@@ -216,29 +194,32 @@ The project supports multiple deployment configurations:
    # Test function deployment
    python scripts/test_function.py
    python scripts/test_deployment.py
-
-   # Test scheduled function
-   python scripts/test_function_from_scheduler.py
-
-   # Test transaction parsing
-   python scripts/test_transaction_parse.py
    ```
 
 ## Troubleshooting
 
-1. Permission Issues:
+1. Terraform Issues:
+   ```bash
+   # Clean Terraform state
+   terraform init -reconfigure
+
+   # Import existing resources
+   terraform import [resource_address] [resource_id]
+
+   # Remove resource from state
+   terraform state rm [resource_address]
+   ```
+
+2. Permission Issues:
    ```powershell
    # Verify GCloud login
    gcloud auth list
 
-   # Check service account roles
-   gcloud projects get-iam-policy YOUR_PROJECT_ID `
-       --flatten="bindings[].members" `
-       --format='table(bindings.role)' `
-       --filter="bindings.members:python-etl@YOUR_PROJECT_ID.iam.gserviceaccount.com"
+   # Check application default credentials
+   gcloud auth application-default print-access-token
    ```
 
-2. Environment Variables:
+3. Environment Variables:
    ```powershell
    # Windows
    echo %GOOGLE_APPLICATION_CREDENTIALS%
@@ -247,31 +228,4 @@ The project supports multiple deployment configurations:
    # Unix/Linux
    echo $GOOGLE_APPLICATION_CREDENTIALS
    echo $GOOGLE_CLOUD_PROJECT
-   ```
-
-3. Common Issues:
-   - **Missing Dependencies**: Run `pip install -r requirements.txt`
-   - **API Not Enabled**: Check GCP Console > APIs & Services
-   - **Invalid Credentials**: Verify service account key path
-   - **Deployment Failures**: Check Cloud Functions logs in GCP Console
-
-## Maintenance
-
-1. Updating Dependencies:
-   ```bash
-   pip freeze > requirements.txt
-   ```
-
-2. Cleaning Up:
-   ```bash
-   # Remove virtual environment
-   rm -rf venv/
-
-   # Clean Python cache
-   find . -type d -name "__pycache__" -exec rm -r {} +
-   ```
-
-3. Monitoring:
-   - Check Cloud Functions logs in GCP Console
-   - Monitor Cloud Scheduler job executions
-   - Review Storage bucket access logs 
+   ``` 

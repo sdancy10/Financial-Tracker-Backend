@@ -9,6 +9,308 @@ REM Set PYTHONPATH to include current directory
 set "PYTHONPATH=%CURRENT_DIR%;%PYTHONPATH%"
 echo Set PYTHONPATH to include current directory: %PYTHONPATH%
 
+REM Install pyyaml if needed
+echo Installing required Python packages...
+pip install pyyaml --quiet
+
+REM Create a temporary Python script to read config
+echo import yaml > read_config.py
+echo with open('config.yaml', 'r') as f: >> read_config.py
+echo     config = yaml.safe_load(f) >> read_config.py
+echo print('PROJECT_ID=' + str(config['gcp']['project_id']).strip()) >> read_config.py
+echo print('REGION=' + str(config['gcp']['region']).strip()) >> read_config.py
+
+REM Get project ID and region from config.yaml
+echo Reading project configuration...
+python read_config.py > config_output.tmp
+for /f "usebackq tokens=1,* delims==" %%a in ("config_output.tmp") do (
+    if "%%a"=="PROJECT_ID" (
+        set "PROJECT_ID=%%b"
+    ) else if "%%a"=="REGION" (
+        set "REGION=%%b"
+    )
+)
+
+REM Clean up temporary files
+del read_config.py
+del config_output.tmp
+
+echo Using project ID: %PROJECT_ID%
+echo Using region: %REGION%
+
+REM Check if Terraform is installed
+echo Checking for Terraform installation...
+where terraform > nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo Terraform is not installed or not in PATH.
+    echo.
+    echo Options:
+    echo [1] Automatic installation ^(will install Chocolatey if needed^)
+    echo [2] Skip Terraform and continue with deployment
+    echo [3] Exit and install Terraform manually
+    echo.
+    choice /C 123 /N /M "Enter your choice (1-3): "
+    set TERRAFORM_CHOICE=!ERRORLEVEL!
+    
+    if "!TERRAFORM_CHOICE!"=="1" (
+        REM Check if Chocolatey is installed
+        where choco > nul 2>&1
+        if !ERRORLEVEL! NEQ 0 (
+            echo Chocolatey not found. Installing Chocolatey...
+            echo This will require administrator privileges.
+            echo.
+            powershell -Command "Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
+            if !ERRORLEVEL! NEQ 0 (
+                echo Error: Failed to install Chocolatey.
+                echo Please run this script as administrator or install Terraform manually.
+                exit /b 1
+            )
+            echo Chocolatey installed successfully.
+            
+            REM Refresh environment variables
+            echo Refreshing environment variables...
+            call refreshenv
+            
+            REM Verify Chocolatey is now available
+            where choco > nul 2>&1
+            if !ERRORLEVEL! NEQ 0 (
+                echo Error: Chocolatey installation succeeded but command not found.
+                echo Please close this window and run the script again as administrator.
+                exit /b 1
+            )
+        )
+        
+        echo Installing Terraform using Chocolatey...
+        choco install terraform -y
+        if !ERRORLEVEL! NEQ 0 (
+            echo Error: Failed to install Terraform using Chocolatey.
+            echo Please try running the script as administrator.
+            set "USE_TERRAFORM=0"
+            goto :skip_terraform
+        )
+        echo Terraform installed successfully.
+        
+        REM Refresh environment variables
+        echo Refreshing environment variables...
+        call refreshenv
+        
+        REM Update PATH for current session
+        for /f "tokens=*" %%i in ('where terraform') do set "TERRAFORM_PATH=%%i"
+        if not "!TERRAFORM_PATH!"=="" (
+            set "PATH=%PATH%;%TERRAFORM_PATH%"
+            echo Added Terraform to current session PATH
+        )
+        
+        REM Verify Terraform is now available
+        where terraform > nul 2>&1
+        if !ERRORLEVEL! NEQ 0 (
+            echo Error: Terraform installation succeeded but command not found.
+            echo Please close this window and run the script again.
+            exit /b 1
+        )
+        
+        terraform --version
+    ) else if "!TERRAFORM_CHOICE!"=="2" (
+        echo Skipping Terraform installation and continuing with deployment...
+        set "USE_TERRAFORM=0"
+        goto :skip_terraform
+    ) else if "!TERRAFORM_CHOICE!"=="3" (
+        echo Please install Terraform manually:
+        echo 1. Download from: https://www.terraform.io/downloads.html
+        echo 2. Add to your system PATH
+        echo 3. Run setup.bat again
+        exit /b 1
+    )
+)
+
+REM Check GCP authentication
+echo [DEBUG] Starting GCP authentication check...
+echo.
+echo Step 1: Checking user authentication...
+echo [DEBUG] Getting active account...
+
+REM Get active account directly
+for /f "tokens=*" %%a in ('gcloud auth list --format="value(account)" --filter="status=ACTIVE" 2^>nul') do set "ACTIVE_ACCOUNT=%%a"
+if defined ACTIVE_ACCOUNT (
+    echo [DEBUG] Found active account: %ACTIVE_ACCOUNT%
+) else (
+    echo [DEBUG] No active account found
+    set "ACTIVE_ACCOUNT="
+)
+
+if "%ACTIVE_ACCOUNT%"=="" (
+    echo No active account found.
+    echo.
+    echo NOTE: The next step will open a browser window for authentication.
+    echo After authenticating, return to this window to continue.
+    echo.
+    echo Press any key to continue...
+    pause >nul
+    
+    echo [DEBUG] Starting user login...
+    call gcloud auth login --no-launch-browser
+    
+    REM Verify the login was successful
+    for /f "tokens=*" %%a in ('gcloud auth list --format="get(account)" --filter="status=ACTIVE" 2^>nul') do (
+        set "ACTIVE_ACCOUNT=%%a"
+        echo [DEBUG] Successfully authenticated as: %%a
+    )
+    
+    if "%ACTIVE_ACCOUNT%"=="" (
+        echo Error: Failed to authenticate with GCP.
+        exit /b 1
+    )
+    
+    REM Set project and region
+    echo [DEBUG] Setting project and region...
+    call gcloud config set project %PROJECT_ID%
+    if !ERRORLEVEL! NEQ 0 (
+        echo Error: Failed to set project.
+        exit /b 1
+    )
+    call gcloud config set compute/region %REGION%
+    if !ERRORLEVEL! NEQ 0 (
+        echo Error: Failed to set region.
+        exit /b 1
+    )
+    echo [DEBUG] Project and region configured successfully.
+) else (
+    echo [DEBUG] Using existing authentication for account: %ACTIVE_ACCOUNT%
+    
+    REM Verify project and region are set correctly
+    echo [DEBUG] Verifying project and region configuration...
+    
+    for /f "tokens=*" %%a in ('gcloud config get-value project 2^>nul') do set CURRENT_PROJECT=%%a
+    for /f "tokens=*" %%a in ('gcloud config get-value compute/region 2^>nul') do set CURRENT_REGION=%%a
+    
+    if not "%CURRENT_PROJECT%"=="%PROJECT_ID%" (
+        echo [DEBUG] Setting project to %PROJECT_ID%...
+        call gcloud config set project %PROJECT_ID%
+        if !ERRORLEVEL! NEQ 0 (
+            echo Error: Failed to set project.
+            exit /b 1
+        )
+    )
+    
+    if not "%CURRENT_REGION%"=="%REGION%" (
+        echo [DEBUG] Setting region to %REGION%...
+        call gcloud config set compute/region %REGION%
+        if !ERRORLEVEL! NEQ 0 (
+            echo Error: Failed to set region.
+            exit /b 1
+        )
+    )
+)
+
+echo [DEBUG] Starting application default credentials check...
+echo Step 2: Checking application default credentials...
+echo Testing access token retrieval...
+call gcloud auth application-default print-access-token >nul 2>&1
+set ADC_STATUS=!ERRORLEVEL!
+echo [DEBUG] ADC check complete with status: !ADC_STATUS!
+
+if !ADC_STATUS! NEQ 0 (
+    echo [DEBUG] No ADC found, entering setup...
+    echo No application default credentials found ^(required for Terraform^).
+    echo.
+    echo NOTE: The next step will open a browser window for authentication.
+    echo After authenticating, return to this window to continue.
+    echo.
+    echo Press any key to continue...
+    pause >nul
+    
+    echo [DEBUG] Starting ADC login...
+    call gcloud auth application-default login --no-launch-browser
+    set ADC_RESULT=!ERRORLEVEL!
+    echo [DEBUG] ADC login complete with status: !ADC_RESULT!
+    
+    if !ADC_RESULT! NEQ 0 (
+        echo.
+        echo Error: Failed to set up application default credentials.
+        exit /b 1
+    ) else (
+        echo.
+        echo Successfully configured application default credentials.
+    )
+) else (
+    echo [DEBUG] ADC already configured
+    echo ✓ Application default credentials are already configured.
+    echo ✓ User is authenticated as: %ACTIVE_ACCOUNT%
+)
+
+echo [DEBUG] Authentication check complete
+echo.
+echo Current GCP configuration:
+echo ------------------------
+echo Project: 
+call gcloud config get-value project
+echo Account:
+call gcloud config get-value account
+echo Region:
+call gcloud config get-value compute/region
+echo ------------------------
+echo.
+
+REM Now use Terraform to manage infrastructure
+echo Initializing Terraform...
+
+REM Handle GOOGLE_APPLICATION_CREDENTIALS path
+if defined GOOGLE_APPLICATION_CREDENTIALS (
+    echo [DEBUG] Found GOOGLE_APPLICATION_CREDENTIALS set to: %GOOGLE_APPLICATION_CREDENTIALS%
+    REM Convert relative path to absolute path using full path
+    set "CREDENTIALS_PATH=%CURRENT_DIR%\%GOOGLE_APPLICATION_CREDENTIALS%"
+    echo [DEBUG] Using absolute path for credentials: !CREDENTIALS_PATH!
+    if exist "!CREDENTIALS_PATH!" (
+        echo [DEBUG] Service account key file found
+        set "GOOGLE_APPLICATION_CREDENTIALS=!CREDENTIALS_PATH!"
+    ) else (
+        echo [DEBUG] Service account key file not found at: !CREDENTIALS_PATH!
+        echo [DEBUG] Falling back to application default credentials
+        set "GOOGLE_APPLICATION_CREDENTIALS="
+    )
+)
+
+cd terraform
+
+REM Initialize Terraform first
+terraform init
+if %ERRORLEVEL% NEQ 0 (
+    echo Error: Failed to initialize Terraform.
+    exit /b 1
+)
+
+echo.
+echo Showing planned changes...
+terraform plan
+if %ERRORLEVEL% NEQ 0 (
+    echo Error: Failed to plan Terraform changes.
+    exit /b 1
+)
+
+echo.
+echo Would you like to apply these changes?
+echo [1] Yes, apply the changes
+echo [2] No, skip Terraform changes
+echo.
+choice /C 12 /N /M "Enter your choice (1-2): "
+set APPLY_CHOICE=!ERRORLEVEL!
+
+if "!APPLY_CHOICE!"=="1" (
+    echo Applying Terraform changes...
+    terraform apply -auto-approve
+    if !ERRORLEVEL! NEQ 0 (
+        echo Error: Failed to apply Terraform changes.
+        exit /b 1
+    )
+    echo Terraform changes applied successfully.
+) else (
+    echo Skipping Terraform changes.
+)
+
+cd ..
+
+:skip_terraform
+
 REM Check if virtual environment exists
 if exist venv (
     echo Found existing virtual environment
@@ -96,7 +398,6 @@ for /f "usebackq tokens=1,* delims==" %%a in (`python temp_config.py`) do (
     set "%%a=%%b"
 )
 del temp_config.py
-
 if "%RUN_TESTS%"=="1" (
     echo === Running Pre-deployment Tests ===
     echo.
@@ -164,8 +465,27 @@ if "%RUN_TESTS%"=="1" (
 echo === Starting Deployment ===
 echo.
 
-REM Deploy storage buckets
-echo Step 1: Deploying storage buckets...
+REM Check if we should deploy infrastructure with Terraform
+if "%USE_TERRAFORM%"=="1" (
+    echo Step 1: Applying Terraform configuration...
+    cd terraform
+    terraform init
+    if %ERRORLEVEL% NEQ 0 (
+        echo Error: Failed to initialize Terraform
+        exit /b 1
+    )
+    terraform apply
+    if %ERRORLEVEL% NEQ 0 (
+        echo Error: Failed to apply Terraform configuration
+        exit /b 1
+    )
+    cd ..
+    echo Terraform resources deployed successfully
+    echo.
+)
+
+REM Deploy storage buckets (will respect Terraform state)
+echo Step 2: Deploying storage buckets...
 python scripts/deploy_storage.py
 if %ERRORLEVEL% NEQ 0 (
     echo Error: Failed to deploy storage buckets
@@ -173,15 +493,15 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 REM Set up service accounts
-echo Step 2: Setting up service accounts...
+echo Step 3: Setting up service accounts...
 python scripts/setup_service_accounts.py
 if %ERRORLEVEL% NEQ 0 (
     echo Error: Failed to set up service accounts
     exit /b 1
 )
 
-REM Deploy credentials
-echo Step 3: Deploying credentials...
+REM Deploy credentials (will respect Terraform state)
+echo Step 4: Deploying credentials...
 python scripts/deploy_credentials.py
 if %ERRORLEVEL% NEQ 0 (
     echo Error: Failed to deploy credentials
@@ -204,8 +524,8 @@ del temp_wait.py
 echo Waiting for %WAIT_TIME% seconds to ensure all resources are ready...
 timeout /t %WAIT_TIME% /nobreak > nul
 
-REM Deploy Cloud Function and Scheduler
-echo Step 4: Deploying Cloud Function and Scheduler...
+REM Deploy Cloud Function and Scheduler (will respect Terraform state)
+echo Step 5: Deploying Cloud Function and Scheduler...
 python scripts/deploy_functions.py
 if %ERRORLEVEL% NEQ 0 (
     echo Error: Failed to deploy Cloud Function and Scheduler
@@ -215,7 +535,7 @@ if %ERRORLEVEL% NEQ 0 (
 REM Run post-deployment integration tests if enabled
 if "%RUN_TESTS%"=="1" (
     echo.
-    echo Step 5: Running post-deployment test...
+    echo Step 6: Running post-deployment test...
     for %%f in (%POST_DEPLOYMENT_PATHS%) do (
         python %%f
         if !ERRORLEVEL! NEQ 0 (

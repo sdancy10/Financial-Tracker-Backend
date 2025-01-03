@@ -10,6 +10,7 @@ A serverless application that automatically processes financial transaction emai
 - 🔒 Secure credential management with GCP Secret Manager
 - 🔄 Automated scheduled processing
 - 🎯 Template-based transaction parsing
+- 🏗️ Infrastructure as Code with Terraform
 
 ## Documentation
 
@@ -22,6 +23,7 @@ A serverless application that automatically processes financial transaction emai
 1. **Prerequisites**
    - Python 3.9+
    - Google Cloud SDK
+   - Terraform
    - Active Google Cloud Project
    - Gmail API access
 
@@ -31,20 +33,22 @@ A serverless application that automatically processes financial transaction emai
    git clone <repository-url>
    cd financial-tracker-backend
 
-   # Install dependencies
-   pip install -r requirements.txt
+   # Copy configuration file
+   cp config.yaml.example config.yaml
+   # Edit config.yaml with your settings
 
-   # Set up OAuth credentials
-   python scripts/setup_oauth.py
-
-   # Deploy credentials to GCP
-   python scripts/deploy_credentials.py
+   # Run setup script (Windows)
+   scripts/setup.bat
+   # OR for Unix/Linux
+   chmod +x scripts/setup.sh
+   ./scripts/setup.sh
    ```
 
 3. **Configuration**
-   - Copy `.env.example` to `.env`
-   - Update environment variables
-   - Verify credentials deployment with `python scripts/list_secrets.py`
+   - Update `config.yaml` with your settings
+   - Configure enabled services in the `features` section
+   - Set up OAuth credentials
+   - Deploy credentials to GCP Secret Manager
 
 For detailed setup instructions, see [SETUP.md](SETUP.md).
 
@@ -61,14 +65,28 @@ python -m pytest tests/
 python src/main.py
 ```
 
-## Deployment
+## Infrastructure Management
 
-The application uses Google Cloud Platform services:
+The application uses Terraform to manage Google Cloud Platform services:
 - Cloud Functions for serverless compute
 - Firestore for data storage
 - Cloud Storage for email archives
 - Cloud Scheduler for automated processing
 - Secret Manager for secure credentials
+- Pub/Sub for event handling
+
+Infrastructure management commands:
+```bash
+# Initialize Terraform
+cd terraform
+terraform init
+
+# Plan changes
+terraform plan
+
+# Apply changes
+terraform apply
+```
 
 See [SETUP.md](SETUP.md) for detailed deployment instructions.
 

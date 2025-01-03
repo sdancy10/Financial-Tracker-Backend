@@ -4,7 +4,9 @@ import json
 import base64
 import logging
 import hashlib
+import subprocess
 from datetime import datetime, timedelta
+from pathlib import Path
 from google.cloud import scheduler_v1
 
 # Add project root to Python path
@@ -49,6 +51,57 @@ class SchedulerDeployer:
         # Hash file for tracking changes
         self.hash_file = '.scheduler_hashes.json'
         self.deployment_hashes = self._load_deployment_hashes()
+        
+        # Add Terraform state checking
+        self.terraform_state = self._load_terraform_state()
+        self.is_terraform_managed = self.terraform_state is not None
+        self.is_free_tier = self._check_if_free_tier()
+    
+    def _load_terraform_state(self):
+        """Load Terraform state if it exists"""
+        try:
+            terraform_dir = Path(__file__).parent.parent / "terraform"
+            if not terraform_dir.exists():
+                return None
+                
+            # Try to get Terraform state
+            result = subprocess.run(
+                ["terraform", "show", "-json"],
+                cwd=terraform_dir,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                return json.loads(result.stdout)
+            return None
+        except Exception as e:
+            self.logger.warning(f"Could not load Terraform state: {e}")
+            return None
+    
+    def _check_if_free_tier(self):
+        """Check if we're using free tier configuration"""
+        if not self.terraform_state:
+            return False
+            
+        # Check for free tier resources in state
+        resources = self.terraform_state.get("resources", [])
+        return any(r.get("name", "").endswith("-free") for r in resources)
+    
+    def _get_terraform_scheduler(self, job_name):
+        """Get scheduler job details from Terraform state"""
+        if not self.terraform_state:
+            return None
+            
+        resources = self.terraform_state.get("resources", [])
+        for resource in resources:
+            if resource.get("type") == "google_cloud_scheduler_job":
+                instances = resource.get("instances", [{}])
+                for instance in instances:
+                    attrs = instance.get("attributes", {})
+                    if attrs.get("name") == job_name:
+                        return attrs
+        return None
     
     def _load_deployment_hashes(self):
         """Load saved deployment hashes"""
@@ -83,7 +136,7 @@ class SchedulerDeployer:
         except Exception as e:
             self.logger.warning(f"Failed to calculate scheduler hash: {e}")
             return None
-    
+
     def _create_pubsub_message(self):
         """Create the PubSub message with proper format"""
         message = {
@@ -92,10 +145,20 @@ class SchedulerDeployer:
             'force_sync': True
         }
         return json.dumps(message)
-    
+
     def setup_scheduler(self) -> bool:
         """Set up Cloud Scheduler with proper message format"""
         try:
+            # Get job name based on tier
+            job_name = "process-scheduled-transactions-free" if self.is_free_tier else "process-scheduled-transactions"
+            
+            # Check if scheduler is managed by Terraform
+            if self.is_terraform_managed:
+                tf_scheduler = self._get_terraform_scheduler(job_name)
+                if tf_scheduler:
+                    self.logger.info(f"Scheduler job {job_name} is managed by Terraform")
+                    return True
+            
             # Calculate new hash
             new_hash = self._calculate_scheduler_hash()
             if not new_hash:
@@ -113,7 +176,7 @@ class SchedulerDeployer:
             parent = f'projects/{self.project_id}/locations/{self.region}'
             
             # Create scheduler job
-            job_name = f"{parent}/jobs/process-scheduled-transactions"
+            job_path = f"{parent}/jobs/{job_name}"
             topic_name = f"projects/{self.project_id}/topics/scheduled-transactions"
             
             retry_config = scheduler_v1.RetryConfig(
@@ -125,7 +188,7 @@ class SchedulerDeployer:
             message_data = self._create_pubsub_message()
             
             job = scheduler_v1.Job(
-                name=job_name,
+                name=job_path,
                 description='Trigger scheduled transaction processing',
                 schedule=self.schedule,
                 time_zone=self.timezone,
@@ -143,7 +206,7 @@ class SchedulerDeployer:
                         job=job
                     )
                 )
-                self.logger.info(f"✓ Created scheduler job: {job_name}")
+                self.logger.info(f"Created scheduler job: {job_path}")
                 
                 # Save new hash after successful creation
                 self.deployment_hashes['scheduler'] = new_hash
@@ -152,14 +215,14 @@ class SchedulerDeployer:
                 
             except Exception as e:
                 if "already exists" in str(e).lower():
-                    self.logger.info(f"✓ Scheduler job already exists: {job_name}")
+                    self.logger.info(f"Scheduler job already exists: {job_path}")
                     try:
                         scheduler.update_job(
                             request=scheduler_v1.UpdateJobRequest(
                                 job=job
                             )
                         )
-                        self.logger.info(f"✓ Updated scheduler job: {job_name}")
+                        self.logger.info(f"Updated scheduler job: {job_path}")
                         
                         # Save new hash after successful update
                         self.deployment_hashes['scheduler'] = new_hash
@@ -176,10 +239,20 @@ class SchedulerDeployer:
         except Exception as e:
             self.logger.error(f"Error setting up scheduler: {str(e)}")
             return False
-    
+
     def deploy(self):
         """Deploy the Cloud Scheduler job"""
         try:
+            # Check if we should proceed with deployment
+            if self.is_terraform_managed:
+                self.logger.info("Scheduler is managed by Terraform, checking for manual updates...")
+                job_name = "process-scheduled-transactions-free" if self.is_free_tier else "process-scheduled-transactions"
+                tf_scheduler = self._get_terraform_scheduler(job_name)
+                if tf_scheduler:
+                    self.logger.info("No manual updates needed, scheduler is managed by Terraform")
+                    return True
+            
+            # Proceed with manual deployment
             self.logger.info("\n=== Setting up Cloud Scheduler ===")
             success = self.setup_scheduler()
             if not success:

@@ -10,6 +10,7 @@ import time
 import base64
 import subprocess
 import venv
+from pathlib import Path
 
 # Add project root to Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -134,6 +135,11 @@ class FunctionDeployer:
             'src.services.transaction_scheduler': 'services_transaction_scheduler',
             'src.api.routes': 'api_routes'
         }
+        
+        # Add Terraform state checking
+        self.terraform_state = self._load_terraform_state()
+        self.is_terraform_managed = self.terraform_state is not None
+        self.is_free_tier = self._check_if_free_tier()
     
     def _load_deployment_hashes(self):
         """Load saved deployment hashes"""
@@ -449,21 +455,40 @@ class FunctionDeployer:
     def deploy_function(self) -> bool:
         """Deploy the Cloud Function if changed"""
         try:
+            # Check if function is managed by Terraform
+            function_name = self.function_name
+            if self.is_terraform_managed:
+                tf_function = self._get_terraform_resource(
+                    "google_cloudfunctions_function",
+                    "free_tier_function" if self.is_free_tier else "transaction_processor"
+                )
+                if tf_function:
+                    self.logger.info("Function is managed by Terraform, checking for manual updates...")
+                    # Only proceed if we have changes not in Terraform
+                    if not self._has_manual_updates():
+                        self.logger.info("No manual updates needed, function is managed by Terraform")
+                        return True
+                    function_name = tf_function.get("name", self.function_name)
+            
+            # Rest of the existing deployment code...
+            # Update function name if needed
+            self.function_name = function_name
+            
             # Package the function first
             if not self.package_function():
                 return False
-                
+            
             # Calculate new hash
             new_hash = self._calculate_function_hash('temp/function.zip')
             if not new_hash:
                 return False
-                
+            
             # Check if function has changed
             if new_hash == self.deployment_hashes.get('function'):
                 self.logger.info("Function code hasn't changed since last deployment, skipping...")
                 return True
-                
-            # Continue with deployment if changed
+            
+            # Continue with deployment if changed...
             parent = f'projects/{self.project_id}/locations/{self.region}'
             
             # Create a Pub/Sub topic for the trigger if it doesn't exist
@@ -537,24 +562,51 @@ class FunctionDeployer:
                     return False
             
         except Exception as e:
-            self.logger.error(f"✗ Error in function deployment: {str(e)}")
+            self.logger.error(f"Error in function deployment: {str(e)}")
             return False
+    
+    def _has_manual_updates(self) -> bool:
+        """Check if there are manual updates needed beyond Terraform"""
+        try:
+            # Compare source code hash with Terraform state
+            if not self.package_function():
+                return False
+                
+            new_hash = self._calculate_function_hash('temp/function.zip')
+            tf_function = self._get_terraform_resource(
+                "google_cloudfunctions_function",
+                "free_tier_function" if self.is_free_tier else "transaction_processor"
+            )
+            
+            if tf_function and tf_function.get("source_code_hash") == new_hash:
+                return False
+                
+            return True
+        except Exception as e:
+            self.logger.warning(f"Error checking for manual updates: {e}")
+            return True  # Assume updates needed on error
     
     def deploy(self):
         """Deploy the Cloud Function and set up the scheduler"""
         try:
-            # Deploy function
+            # Check if we should proceed with deployment
+            if self.is_terraform_managed and not self._has_manual_updates():
+                self.logger.info("All resources are managed by Terraform, no manual deployment needed")
+                return True
+                
+            # Proceed with manual deployment for non-Terraform resources
             self.logger.info("\n=== Deploying Cloud Function ===")
             success = self.deploy_function()
             if not success:
                 return False
-
-            # Set up scheduler using the new SchedulerDeployer
-            scheduler_deployer = SchedulerDeployer()
-            success = scheduler_deployer.deploy()
-            if not success:
-                return False
-
+                
+            # Set up scheduler only if not managed by Terraform
+            if not self.is_terraform_managed:
+                scheduler_deployer = SchedulerDeployer()
+                success = scheduler_deployer.deploy()
+                if not success:
+                    return False
+                    
             # Run tests if configured
             should_run_tests = self.testing_config.get('run_after_deployment', False)
             self.logger.info(f"\nTest configuration - run_after_deployment: {should_run_tests}")
@@ -724,6 +776,49 @@ except ImportError as e:
         except subprocess.CalledProcessError as e:
             print(f"\n[ERROR] Deployment package tests failed!")
             return False
+
+    def _load_terraform_state(self):
+        """Load Terraform state if it exists"""
+        try:
+            terraform_dir = Path(project_root) / "terraform"
+            if not terraform_dir.exists():
+                return None
+                
+            # Try to get Terraform state
+            result = subprocess.run(
+                ["terraform", "show", "-json"],
+                cwd=terraform_dir,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                return json.loads(result.stdout)
+            return None
+        except Exception as e:
+            self.logger.warning(f"Could not load Terraform state: {e}")
+            return None
+            
+    def _check_if_free_tier(self):
+        """Check if we're using free tier configuration"""
+        if not self.terraform_state:
+            return False
+            
+        # Check for free tier resources in state
+        resources = self.terraform_state.get("resources", [])
+        return any(r.get("name", "").endswith("-free") for r in resources)
+        
+    def _get_terraform_resource(self, resource_type, resource_name):
+        """Get resource details from Terraform state"""
+        if not self.terraform_state:
+            return None
+            
+        resources = self.terraform_state.get("resources", [])
+        for resource in resources:
+            if (resource.get("type") == resource_type and 
+                resource.get("name") == resource_name):
+                return resource.get("instances", [{}])[0].get("attributes", {})
+        return None
 
 def main():
     deployer = FunctionDeployer()
