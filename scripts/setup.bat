@@ -5,6 +5,8 @@ REM Check if running in Cloud Build
 if defined CLOUD_BUILD (
     echo Running in Cloud Build environment
     set "NON_INTERACTIVE=1"
+    echo Using Cloud Build service account authentication
+    REM Skip GCP auth check in Cloud Build as it uses service account
 ) else (
     set "NON_INTERACTIVE=0"
 )
@@ -192,83 +194,87 @@ if %ERRORLEVEL% NEQ 0 (
 
 :skip_terraform
 
-REM Check GCP authentication
-echo [DEBUG] Starting GCP authentication check...
-echo.
-echo Step 1: Checking user authentication...
-echo [DEBUG] Getting active account...
-
-REM Get active account directly
-for /f "tokens=*" %%a in ('gcloud auth list --format="value(account)" --filter="status=ACTIVE" 2^>nul') do set "ACTIVE_ACCOUNT=%%a"
-if defined ACTIVE_ACCOUNT (
-    echo [DEBUG] Found active account: %ACTIVE_ACCOUNT%
-) else (
-    echo [DEBUG] No active account found
-    set "ACTIVE_ACCOUNT="
-)
-
-if "%ACTIVE_ACCOUNT%"=="" (
-    echo No active account found.
+REM Check GCP authentication (only if not in Cloud Build)
+if not defined CLOUD_BUILD (
+    echo [DEBUG] Starting GCP authentication check...
     echo.
-    echo NOTE: The next step will open a browser window for authentication.
-    echo After authenticating, return to this window to continue.
-    echo.
-    echo Press any key to continue...
-    pause >nul
-    
-    echo [DEBUG] Starting user login...
-    call gcloud auth login --no-launch-browser
-    
-    REM Verify the login was successful
-    for /f "tokens=*" %%a in ('gcloud auth list --format="get(account)" --filter="status=ACTIVE" 2^>nul') do (
-        set "ACTIVE_ACCOUNT=%%a"
-        echo [DEBUG] Successfully authenticated as: %%a
+    echo Step 1: Checking user authentication...
+    echo [DEBUG] Getting active account...
+
+    REM Get active account directly
+    for /f "tokens=*" %%a in ('gcloud auth list --format="value(account)" --filter="status=ACTIVE" 2^>nul') do set "ACTIVE_ACCOUNT=%%a"
+    if defined ACTIVE_ACCOUNT (
+        echo [DEBUG] Found active account: %ACTIVE_ACCOUNT%
+    ) else (
+        echo [DEBUG] No active account found
+        set "ACTIVE_ACCOUNT="
     )
-    
+
     if "%ACTIVE_ACCOUNT%"=="" (
-        echo Error: Failed to authenticate with GCP.
-        exit /b 1
-    )
-    
-    REM Set project and region
-    echo [DEBUG] Setting project and region...
-    call gcloud config set project %PROJECT_ID%
-    if !ERRORLEVEL! NEQ 0 (
-        echo Error: Failed to set project.
-        exit /b 1
-    )
-    call gcloud config set compute/region %REGION%
-    if !ERRORLEVEL! NEQ 0 (
-        echo Error: Failed to set region.
-        exit /b 1
-    )
-    echo [DEBUG] Project and region configured successfully.
-) else (
-    echo [DEBUG] Using existing authentication for account: %ACTIVE_ACCOUNT%
-    
-    REM Verify project and region are set correctly
-    echo [DEBUG] Verifying project and region configuration...
-    
-    for /f "tokens=*" %%a in ('gcloud config get-value project 2^>nul') do set CURRENT_PROJECT=%%a
-    for /f "tokens=*" %%a in ('gcloud config get-value compute/region 2^>nul') do set CURRENT_REGION=%%a
-    
-    if not "%CURRENT_PROJECT%"=="%PROJECT_ID%" (
-        echo [DEBUG] Setting project to %PROJECT_ID%...
+        echo No active account found.
+        echo.
+        echo NOTE: The next step will open a browser window for authentication.
+        echo After authenticating, return to this window to continue.
+        echo.
+        echo Press any key to continue...
+        pause >nul
+        
+        echo [DEBUG] Starting user login...
+        call gcloud auth login --no-launch-browser
+        
+        REM Verify the login was successful
+        for /f "tokens=*" %%a in ('gcloud auth list --format="get(account)" --filter="status=ACTIVE" 2^>nul') do (
+            set "ACTIVE_ACCOUNT=%%a"
+            echo [DEBUG] Successfully authenticated as: %%a
+        )
+        
+        if "%ACTIVE_ACCOUNT%"=="" (
+            echo Error: Failed to authenticate with GCP.
+            exit /b 1
+        )
+        
+        REM Set project and region
+        echo [DEBUG] Setting project and region...
         call gcloud config set project %PROJECT_ID%
         if !ERRORLEVEL! NEQ 0 (
             echo Error: Failed to set project.
             exit /b 1
         )
-    )
-    
-    if not "%CURRENT_REGION%"=="%REGION%" (
-        echo [DEBUG] Setting region to %REGION%...
         call gcloud config set compute/region %REGION%
         if !ERRORLEVEL! NEQ 0 (
             echo Error: Failed to set region.
             exit /b 1
         )
+        echo [DEBUG] Project and region configured successfully.
+    ) else (
+        echo [DEBUG] Using existing authentication for account: %ACTIVE_ACCOUNT%
+        
+        REM Verify project and region are set correctly
+        echo [DEBUG] Verifying project and region configuration...
+        
+        for /f "tokens=*" %%a in ('gcloud config get-value project 2^>nul') do set CURRENT_PROJECT=%%a
+        for /f "tokens=*" %%a in ('gcloud config get-value compute/region 2^>nul') do set CURRENT_REGION=%%a
+        
+        if not "%CURRENT_PROJECT%"=="%PROJECT_ID%" (
+            echo [DEBUG] Setting project to %PROJECT_ID%...
+            call gcloud config set project %PROJECT_ID%
+            if !ERRORLEVEL! NEQ 0 (
+                echo Error: Failed to set project.
+                exit /b 1
+            )
+        )
+        
+        if not "%CURRENT_REGION%"=="%REGION%" (
+            echo [DEBUG] Setting region to %REGION%...
+            call gcloud config set compute/region %REGION%
+            if !ERRORLEVEL! NEQ 0 (
+                echo Error: Failed to set region.
+                exit /b 1
+            )
+        )
     )
+) else (
+    echo Skipping GCP auth check in Cloud Build environment
 )
 
 echo [DEBUG] Starting application default credentials check...

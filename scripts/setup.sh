@@ -7,6 +7,8 @@ set -e
 if [ -n "$CLOUD_BUILD" ]; then
     echo "Running in Cloud Build environment"
     NON_INTERACTIVE=1
+    echo "Using Cloud Build service account authentication"
+    # Skip GCP auth check in Cloud Build as it uses service account
 else
     NON_INTERACTIVE=0
 fi
@@ -181,74 +183,78 @@ else
     USE_TERRAFORM=1
 fi
 
-# Check GCP authentication
-echo "[DEBUG] Starting GCP authentication check..."
-echo
-echo "Step 1: Checking user authentication..."
-echo "[DEBUG] Getting active account..."
-
-# Get active account directly
-ACTIVE_ACCOUNT=$(gcloud auth list --format="value(account)" --filter="status=ACTIVE" 2>/dev/null)
-if [ -n "$ACTIVE_ACCOUNT" ]; then
-    echo "[DEBUG] Found active account: $ACTIVE_ACCOUNT"
-else
-    echo "[DEBUG] No active account found"
-fi
-
-if [ -z "$ACTIVE_ACCOUNT" ]; then
-    echo "No active account found."
+# Check GCP authentication (only if not in Cloud Build)
+if [ -z "$CLOUD_BUILD" ]; then
+    echo "[DEBUG] Starting GCP authentication check..."
     echo
-    echo "NOTE: The next step will open a browser window for authentication."
-    echo "After authenticating, return to this window to continue."
-    echo
-    read -p "Press Enter to continue..."
+    echo "Step 1: Checking user authentication..."
+    echo "[DEBUG] Getting active account..."
     
-    echo "[DEBUG] Starting user login..."
-    gcloud auth login --no-launch-browser
-    
-    # Verify the login was successful
+    # Get active account directly
     ACTIVE_ACCOUNT=$(gcloud auth list --format="value(account)" --filter="status=ACTIVE" 2>/dev/null)
+    if [ -n "$ACTIVE_ACCOUNT" ]; then
+        echo "[DEBUG] Found active account: $ACTIVE_ACCOUNT"
+    else
+        echo "[DEBUG] No active account found"
+    fi
+
     if [ -z "$ACTIVE_ACCOUNT" ]; then
-        echo "Error: Failed to authenticate with GCP."
-        exit 1
-    fi
-    echo "[DEBUG] Successfully authenticated as: $ACTIVE_ACCOUNT"
-    
-    # Set project and region
-    echo "[DEBUG] Setting project and region..."
-    if ! gcloud config set project "$PROJECT_ID"; then
-        echo "Error: Failed to set project."
-        exit 1
-    fi
-    if ! gcloud config set compute/region "$REGION"; then
-        echo "Error: Failed to set region."
-        exit 1
-    fi
-    echo "[DEBUG] Project and region configured successfully."
-else
-    echo "[DEBUG] Using existing authentication for account: $ACTIVE_ACCOUNT"
-    
-    # Verify project and region are set correctly
-    echo "[DEBUG] Verifying project and region configuration..."
-    
-    CURRENT_PROJECT=$(gcloud config get-value project 2>/dev/null)
-    CURRENT_REGION=$(gcloud config get-value compute/region 2>/dev/null)
-    
-    if [ "$CURRENT_PROJECT" != "$PROJECT_ID" ]; then
-        echo "[DEBUG] Setting project to $PROJECT_ID..."
+        echo "No active account found."
+        echo
+        echo "NOTE: The next step will open a browser window for authentication."
+        echo "After authenticating, return to this window to continue."
+        echo
+        read -p "Press Enter to continue..."
+        
+        echo "[DEBUG] Starting user login..."
+        gcloud auth login --no-launch-browser
+        
+        # Verify the login was successful
+        ACTIVE_ACCOUNT=$(gcloud auth list --format="value(account)" --filter="status=ACTIVE" 2>/dev/null)
+        if [ -z "$ACTIVE_ACCOUNT" ]; then
+            echo "Error: Failed to authenticate with GCP."
+            exit 1
+        fi
+        echo "[DEBUG] Successfully authenticated as: $ACTIVE_ACCOUNT"
+        
+        # Set project and region
+        echo "[DEBUG] Setting project and region..."
         if ! gcloud config set project "$PROJECT_ID"; then
             echo "Error: Failed to set project."
             exit 1
         fi
-    fi
-    
-    if [ "$CURRENT_REGION" != "$REGION" ]; then
-        echo "[DEBUG] Setting region to $REGION..."
         if ! gcloud config set compute/region "$REGION"; then
             echo "Error: Failed to set region."
             exit 1
         fi
+        echo "[DEBUG] Project and region configured successfully."
+    else
+        echo "[DEBUG] Using existing authentication for account: $ACTIVE_ACCOUNT"
+        
+        # Verify project and region are set correctly
+        echo "[DEBUG] Verifying project and region configuration..."
+        
+        CURRENT_PROJECT=$(gcloud config get-value project 2>/dev/null)
+        CURRENT_REGION=$(gcloud config get-value compute/region 2>/dev/null)
+        
+        if [ "$CURRENT_PROJECT" != "$PROJECT_ID" ]; then
+            echo "[DEBUG] Setting project to $PROJECT_ID..."
+            if ! gcloud config set project "$PROJECT_ID"; then
+                echo "Error: Failed to set project."
+                exit 1
+            fi
+        fi
+        
+        if [ "$CURRENT_REGION" != "$REGION" ]; then
+            echo "[DEBUG] Setting region to $REGION..."
+            if ! gcloud config set compute/region "$REGION"; then
+                echo "Error: Failed to set region."
+                exit 1
+            fi
+        fi
     fi
+else
+    echo "Skipping GCP auth check in Cloud Build environment"
 fi
 
 echo "[DEBUG] Starting application default credentials check..."
