@@ -330,6 +330,18 @@ resource "google_secret_manager_secret" "cloud_build_sa_key" {
   ]
 }
 
+# Add service account key as a secret version
+resource "google_secret_manager_secret_version" "cloud_build_sa_key" {
+  count = local.enabled_services.cloud_build ? 1 : 0
+  
+  secret = google_secret_manager_secret.cloud_build_sa_key[0].id
+  secret_data = file("${path.module}/../credentials/service-account-key.json")
+
+  depends_on = [
+    google_secret_manager_secret.cloud_build_sa_key
+  ]
+}
+
 # IAM for Cloud Build
 resource "google_project_iam_member" "cloud_build_sa" {
   count = local.enabled_services.cloud_build ? 1 : 0
@@ -344,26 +356,16 @@ resource "google_project_iam_member" "cloud_build_sa" {
 }
 
 resource "google_project_iam_member" "cloud_build_terraform" {
-  count = local.enabled_services.cloud_build ? 1 : 0
-  
-  project = local.config.project.id
-  role    = "roles/editor"  # Needs broad permissions to create resources
-  member  = "serviceAccount:${local.service_accounts.cloud_build}"
-
-  depends_on = [
-    google_project_service.required_apis["cloudbuild.googleapis.com"]
-  ]
+  count   = local.enabled_services.cloud_build ? 1 : 0
+  project = data.google_project.project.project_id
+  role    = "roles/editor"
+  member  = "serviceAccount:${data.google_project.project.number}@cloudbuild.gserviceaccount.com"
 }
 
 # Add Secret Manager access for Cloud Build
 resource "google_project_iam_member" "cloud_build_secret_accessor" {
-  count = local.enabled_services.cloud_build ? 1 : 0
-  
-  project = local.config.project.id
+  count   = local.enabled_services.cloud_build ? 1 : 0
+  project = data.google_project.project.project_id
   role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${local.service_accounts.cloud_build}"
-
-  depends_on = [
-    google_project_service.required_apis["cloudbuild.googleapis.com"]
-  ]
+  member  = "serviceAccount:${data.google_project.project.number}@cloudbuild.gserviceaccount.com"
 } 
