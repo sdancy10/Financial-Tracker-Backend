@@ -25,7 +25,11 @@ steps:
         # Set PATH to include venv before running setup.sh
         export PATH="/workspace/venv/bin:$$PATH"
 
+        # Copy config.yaml to workspace root
+        cp terraform/config.yaml /workspace/config.yaml
+
         # Now run setup.sh in the virtual environment
+        cd /workspace
         bash scripts/setup.sh
     env:
       - 'CLOUD_BUILD=1'
