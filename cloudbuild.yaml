@@ -23,7 +23,7 @@ steps:
         . /workspace/venv/bin/activate
 
         # Set PATH to include venv before running setup.sh
-        export PATH="/workspace/venv/bin:$PATH"
+        export PATH="/workspace/venv/bin:$$PATH"
 
         # Now run setup.sh in the virtual environment
         bash scripts/setup.sh
