@@ -132,7 +132,6 @@ class FunctionDeployer:
             'src.services.transaction_processor': 'services_transaction_processor',
             'src.services.transaction_trainer': 'services_transaction_trainer',
             'src.services.transaction_scheduler': 'services_transaction_scheduler',
-            'src.services.orchestrator': 'services_orchestrator',
             'src.api.routes': 'api_routes'
         }
     
