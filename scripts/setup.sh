@@ -53,90 +53,123 @@ echo "Checking for Terraform installation..."
 if ! command -v terraform &> /dev/null; then
     echo "Terraform is not installed or not in PATH."
     echo
-    echo "Options:"
-    echo "[1] Automatic installation (will install package manager if needed)"
-    echo "[2] Skip Terraform and continue with deployment"
-    echo "[3] Exit and install Terraform manually"
-    echo
-    read -p "Enter your choice (1-3): " TERRAFORM_CHOICE
-    
-    if [ "$TERRAFORM_CHOICE" = "1" ]; then
-        # Check the OS and use appropriate package manager
-        if [ "$(uname)" = "Darwin" ]; then
-            # macOS - use Homebrew
-            if ! command -v brew &> /dev/null; then
-                echo "Homebrew not found. Installing Homebrew..."
-                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-                if [ $? -ne 0 ]; then
-                    echo "Error: Failed to install Homebrew."
-                    echo "Please run this script as administrator or install Terraform manually."
-                    exit 1
-                fi
-                echo "Homebrew installed successfully."
-            fi
-            echo "Installing Terraform using Homebrew..."
-            brew install terraform
+
+    if [ "$NON_INTERACTIVE" = "1" ]; then
+        echo "Running in non-interactive mode, installing Terraform automatically..."
+        # Download and install Terraform directly in Cloud Build environment
+        echo "Downloading Terraform..."
+        wget https://releases.hashicorp.com/terraform/1.7.4/terraform_1.7.4_linux_amd64.zip
+        if [ $? -ne 0 ]; then
+            echo "Error: Failed to download Terraform."
+            USE_TERRAFORM=0
+        else
+            echo "Unzipping Terraform..."
+            unzip terraform_1.7.4_linux_amd64.zip
             if [ $? -ne 0 ]; then
-                echo "Error: Failed to install Terraform using Homebrew."
-                echo "Please try running the script as administrator."
+                echo "Error: Failed to unzip Terraform."
                 USE_TERRAFORM=0
             else
-                echo "Terraform installed successfully."
-                USE_TERRAFORM=1
-            fi
-        elif [ "$(expr substr $(uname -s) 1 5)" = "Linux" ]; then
-            # Linux - use apt-get or yum
-            if command -v apt-get &> /dev/null; then
-                echo "Installing Terraform using apt-get..."
-                sudo apt-get update
-                sudo apt-get install -y terraform
+                echo "Installing Terraform..."
+                chmod +x terraform
+                mv terraform /usr/local/bin/
                 if [ $? -ne 0 ]; then
-                    echo "Error: Failed to install Terraform using apt-get."
+                    echo "Error: Failed to install Terraform. Trying current directory..."
+                    mv terraform ./terraform
+                    export PATH=$PATH:$PWD
+                    USE_TERRAFORM=1
+                else
+                    echo "Terraform installed successfully."
+                    USE_TERRAFORM=1
+                fi
+                rm terraform_1.7.4_linux_amd64.zip
+            fi
+        fi
+    else
+        echo "Options:"
+        echo "[1] Automatic installation (will install package manager if needed)"
+        echo "[2] Skip Terraform and continue with deployment"
+        echo "[3] Exit and install Terraform manually"
+        echo
+        read -p "Enter your choice (1-3): " TERRAFORM_CHOICE
+        
+        if [ "$TERRAFORM_CHOICE" = "1" ]; then
+            # Check the OS and use appropriate package manager
+            if [ "$(uname)" = "Darwin" ]; then
+                # macOS - use Homebrew
+                if ! command -v brew &> /dev/null; then
+                    echo "Homebrew not found. Installing Homebrew..."
+                    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                    if [ $? -ne 0 ]; then
+                        echo "Error: Failed to install Homebrew."
+                        echo "Please run this script as administrator or install Terraform manually."
+                        exit 1
+                    fi
+                    echo "Homebrew installed successfully."
+                fi
+                echo "Installing Terraform using Homebrew..."
+                brew install terraform
+                if [ $? -ne 0 ]; then
+                    echo "Error: Failed to install Terraform using Homebrew."
                     echo "Please try running the script as administrator."
                     USE_TERRAFORM=0
                 else
                     echo "Terraform installed successfully."
                     USE_TERRAFORM=1
                 fi
-            elif command -v yum &> /dev/null; then
-                echo "Installing Terraform using yum..."
-                sudo yum install -y terraform
-                if [ $? -ne 0 ]; then
-                    echo "Error: Failed to install Terraform using yum."
-                    echo "Please try running the script as administrator."
-                    USE_TERRAFORM=0
+            elif [ "$(expr substr $(uname -s) 1 5)" = "Linux" ]; then
+                # Linux - use apt-get or yum
+                if command -v apt-get &> /dev/null; then
+                    echo "Installing Terraform using apt-get..."
+                    sudo apt-get update
+                    sudo apt-get install -y terraform
+                    if [ $? -ne 0 ]; then
+                        echo "Error: Failed to install Terraform using apt-get."
+                        echo "Please try running the script as administrator."
+                        USE_TERRAFORM=0
+                    else
+                        echo "Terraform installed successfully."
+                        USE_TERRAFORM=1
+                    fi
+                elif command -v yum &> /dev/null; then
+                    echo "Installing Terraform using yum..."
+                    sudo yum install -y terraform
+                    if [ $? -ne 0 ]; then
+                        echo "Error: Failed to install Terraform using yum."
+                        echo "Please try running the script as administrator."
+                        USE_TERRAFORM=0
+                    else
+                        echo "Terraform installed successfully."
+                        USE_TERRAFORM=1
+                    fi
                 else
-                    echo "Terraform installed successfully."
-                    USE_TERRAFORM=1
+                    echo "Error: No supported package manager found."
+                    echo "Please install Terraform manually."
+                    USE_TERRAFORM=0
                 fi
             else
-                echo "Error: No supported package manager found."
+                echo "Error: Unsupported operating system."
                 echo "Please install Terraform manually."
                 USE_TERRAFORM=0
             fi
-        else
-            echo "Error: Unsupported operating system."
-            echo "Please install Terraform manually."
+            
+            # Verify Terraform is now available
+            if ! command -v terraform &> /dev/null; then
+                echo "Error: Terraform installation succeeded but command not found."
+                echo "Please close this window and run the script again."
+                exit 1
+            fi
+            
+            terraform --version
+        elif [ "$TERRAFORM_CHOICE" = "2" ]; then
+            echo "Skipping Terraform installation and continuing with deployment..."
             USE_TERRAFORM=0
-        fi
-        
-        # Verify Terraform is now available
-        if ! command -v terraform &> /dev/null; then
-            echo "Error: Terraform installation succeeded but command not found."
-            echo "Please close this window and run the script again."
+        else
+            echo "Please install Terraform manually:"
+            echo "1. Download from: https://www.terraform.io/downloads.html"
+            echo "2. Add to your system PATH"
+            echo "3. Run setup.sh again"
             exit 1
         fi
-        
-        terraform --version
-    elif [ "$TERRAFORM_CHOICE" = "2" ]; then
-        echo "Skipping Terraform installation and continuing with deployment..."
-        USE_TERRAFORM=0
-    else
-        echo "Please install Terraform manually:"
-        echo "1. Download from: https://www.terraform.io/downloads.html"
-        echo "2. Add to your system PATH"
-        echo "3. Run setup.sh again"
-        exit 1
     fi
 else
     USE_TERRAFORM=1
