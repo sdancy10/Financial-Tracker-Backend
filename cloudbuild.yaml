@@ -6,6 +6,10 @@ steps:
       - '-c'
       - |
         echo "$$SERVICE_ACCOUNT_KEY" > /workspace/service-account.json
+        echo "[DEBUG] Created service account key file:"
+        ls -l /workspace/service-account.json
+        echo "[DEBUG] First few lines of service account key (redacted):"
+        head -n 3 /workspace/service-account.json | sed 's/\("private_key": "\)[^"]*\(".*\)/\1REDACTED\2/'
         gcloud auth activate-service-account --key-file=/workspace/service-account.json
     secretEnv: ['SERVICE_ACCOUNT_KEY']
 
@@ -97,9 +101,31 @@ steps:
         ls -la /workspace/terraform || echo "terraform directory not found"
         echo
 
+        # Debug: Check service account file
+        echo "[DEBUG] Checking service account file..."
+        if [ -f "/workspace/service-account.json" ]; then
+            echo "[DEBUG] Service account file exists"
+            echo "[DEBUG] File permissions:"
+            ls -l /workspace/service-account.json
+            # Copy to credentials directory for Terraform
+            mkdir -p /workspace/credentials
+            cp /workspace/service-account.json /workspace/credentials/service-account-key.json
+            echo "[DEBUG] Copied service account key to credentials directory"
+            echo "[DEBUG] Verifying copied file:"
+            ls -l /workspace/credentials/service-account-key.json
+            echo "[DEBUG] First few lines of copied key (redacted):"
+            head -n 3 /workspace/credentials/service-account-key.json | sed 's/\("private_key": "\)[^"]*\(".*\)/\1REDACTED\2/'
+            echo "[DEBUG] Contents of credentials directory:"
+            ls -la /workspace/credentials
+        else
+            echo "[ERROR] Service account file not found at /workspace/service-account.json"
+            echo "[DEBUG] Contents of /workspace:"
+            ls -la /workspace
+        fi
+
         # Now run setup.sh in the virtual environment
         cd /workspace
-        export GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account.json
+        export GOOGLE_APPLICATION_CREDENTIALS=/workspace/credentials/service-account-key.json
         echo "[DEBUG] Set GOOGLE_APPLICATION_CREDENTIALS to: $$GOOGLE_APPLICATION_CREDENTIALS"
         bash scripts/setup.sh
     env:
