@@ -7,8 +7,11 @@ if defined CLOUD_BUILD (
     set "NON_INTERACTIVE=1"
     echo Using Cloud Build service account authentication
     REM Skip GCP auth check in Cloud Build as it uses service account
+    echo Using service account credentials for Terraform
+    set "USE_GCP_AUTH=0"
 ) else (
     set "NON_INTERACTIVE=0"
+    set "USE_GCP_AUTH=1"
 )
 
 REM Get the current directory
@@ -277,40 +280,47 @@ if not defined CLOUD_BUILD (
     echo Skipping GCP auth check in Cloud Build environment
 )
 
-echo [DEBUG] Starting application default credentials check...
-echo Step 2: Checking application default credentials...
-echo Testing access token retrieval...
-call gcloud auth application-default print-access-token >nul 2>&1
-set ADC_STATUS=!ERRORLEVEL!
-echo [DEBUG] ADC check complete with status: !ADC_STATUS!
+REM Check application default credentials (only if not in Cloud Build)
+if not defined CLOUD_BUILD (
+    echo [DEBUG] Starting application default credentials check...
+    echo Step 2: Checking application default credentials...
+    echo Testing access token retrieval...
+    call gcloud auth application-default print-access-token >nul 2>&1
+    set ADC_STATUS=!ERRORLEVEL!
+    echo [DEBUG] ADC check complete with status: !ADC_STATUS!
 
-if !ADC_STATUS! NEQ 0 (
-    echo [DEBUG] No ADC found, entering setup...
-    echo No application default credentials found ^(required for Terraform^).
-    echo.
-    echo NOTE: The next step will open a browser window for authentication.
-    echo After authenticating, return to this window to continue.
-    echo.
-    echo Press any key to continue...
-    pause >nul
-    
-    echo [DEBUG] Starting ADC login...
-    call gcloud auth application-default login --no-launch-browser
-    set ADC_RESULT=!ERRORLEVEL!
-    echo [DEBUG] ADC login complete with status: !ADC_RESULT!
-    
-    if !ADC_RESULT! NEQ 0 (
+    if !ADC_STATUS! NEQ 0 (
+        echo [DEBUG] No ADC found, entering setup...
+        echo No application default credentials found ^(required for Terraform^).
         echo.
-        echo Error: Failed to set up application default credentials.
-        exit /b 1
+        echo NOTE: The next step will open a browser window for authentication.
+        echo After authenticating, return to this window to continue.
+        echo.
+        echo Press any key to continue...
+        pause >nul
+        
+        echo [DEBUG] Starting ADC login...
+        call gcloud auth application-default login --no-launch-browser
+        set ADC_RESULT=!ERRORLEVEL!
+        echo [DEBUG] ADC login complete with status: !ADC_RESULT!
+        
+        if !ADC_RESULT! NEQ 0 (
+            echo.
+            echo Error: Failed to set up application default credentials.
+            exit /b 1
+        ) else (
+            echo.
+            echo Successfully configured application default credentials.
+        )
     ) else (
-        echo.
-        echo Successfully configured application default credentials.
+        echo [DEBUG] ADC already configured
+        echo ✓ Application default credentials are already configured.
+        echo ✓ User is authenticated as: %ACTIVE_ACCOUNT%
     )
 ) else (
-    echo [DEBUG] ADC already configured
-    echo ✓ Application default credentials are already configured.
-    echo ✓ User is authenticated as: %ACTIVE_ACCOUNT%
+    echo Using Cloud Build service account credentials for Terraform
+    REM In Cloud Build, credentials are automatically available to Terraform
+    set "GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account.json"
 )
 
 echo [DEBUG] Authentication check complete
