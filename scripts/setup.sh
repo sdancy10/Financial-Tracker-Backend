@@ -64,24 +64,25 @@ if ! command -v terraform &> /dev/null; then
             USE_TERRAFORM=0
         else
             echo "Unzipping Terraform..."
-            unzip terraform_1.7.4_linux_amd64.zip
+            # Force overwrite without prompting
+            unzip -o terraform_1.7.4_linux_amd64.zip
             if [ $? -ne 0 ]; then
                 echo "Error: Failed to unzip Terraform."
                 USE_TERRAFORM=0
             else
                 echo "Installing Terraform..."
                 chmod +x terraform
-                mv terraform /usr/local/bin/
+                mv -f terraform /usr/local/bin/
                 if [ $? -ne 0 ]; then
                     echo "Error: Failed to install Terraform. Trying current directory..."
-                    mv terraform ./terraform
+                    mv -f terraform ./terraform
                     export PATH=$PATH:$PWD
                     USE_TERRAFORM=1
                 else
                     echo "Terraform installed successfully."
                     USE_TERRAFORM=1
                 fi
-                rm terraform_1.7.4_linux_amd64.zip
+                rm -f terraform_1.7.4_linux_amd64.zip
             fi
         fi
     else

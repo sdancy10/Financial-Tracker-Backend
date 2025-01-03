@@ -52,84 +52,139 @@ where terraform > nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo Terraform is not installed or not in PATH.
     echo.
-    echo Options:
-    echo [1] Automatic installation ^(will install Chocolatey if needed^)
-    echo [2] Skip Terraform and continue with deployment
-    echo [3] Exit and install Terraform manually
-    echo.
-    choice /C 123 /N /M "Enter your choice (1-3): "
-    set TERRAFORM_CHOICE=!ERRORLEVEL!
-    
-    if "!TERRAFORM_CHOICE!"=="1" (
-        REM Check if Chocolatey is installed
-        where choco > nul 2>&1
-        if !ERRORLEVEL! NEQ 0 (
-            echo Chocolatey not found. Installing Chocolatey...
-            echo This will require administrator privileges.
-            echo.
-            powershell -Command "Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
-            if !ERRORLEVEL! NEQ 0 (
-                echo Error: Failed to install Chocolatey.
-                echo Please run this script as administrator or install Terraform manually.
-                exit /b 1
-            )
-            echo Chocolatey installed successfully.
-            
-            REM Refresh environment variables
-            echo Refreshing environment variables...
-            call refreshenv
-            
-            REM Verify Chocolatey is now available
-            where choco > nul 2>&1
-            if !ERRORLEVEL! NEQ 0 (
-                echo Error: Chocolatey installation succeeded but command not found.
-                echo Please close this window and run the script again as administrator.
-                exit /b 1
-            )
-        )
+
+    if "%NON_INTERACTIVE%"=="1" (
+        echo Running in non-interactive mode, installing Terraform automatically...
         
-        echo Installing Terraform using Chocolatey...
-        choco install terraform -y
+        REM Download and install Terraform directly
+        echo Downloading Terraform...
+        powershell -Command "Invoke-WebRequest -Uri 'https://releases.hashicorp.com/terraform/1.7.4/terraform_1.7.4_windows_amd64.zip' -OutFile 'terraform.zip' -UseBasicParsing"
         if !ERRORLEVEL! NEQ 0 (
-            echo Error: Failed to install Terraform using Chocolatey.
-            echo Please try running the script as administrator.
+            echo Error: Failed to download Terraform.
             set "USE_TERRAFORM=0"
             goto :skip_terraform
         )
-        echo Terraform installed successfully.
-        
-        REM Refresh environment variables
-        echo Refreshing environment variables...
-        call refreshenv
-        
-        REM Update PATH for current session
-        for /f "tokens=*" %%i in ('where terraform') do set "TERRAFORM_PATH=%%i"
-        if not "!TERRAFORM_PATH!"=="" (
-            set "PATH=%PATH%;%TERRAFORM_PATH%"
-            echo Added Terraform to current session PATH
+
+        echo Unzipping Terraform...
+        powershell -Command "$ProgressPreference = 'SilentlyContinue'; Expand-Archive -Path terraform.zip -DestinationPath . -Force"
+        if !ERRORLEVEL! NEQ 0 (
+            echo Error: Failed to unzip Terraform.
+            set "USE_TERRAFORM=0"
+            goto :skip_terraform
         )
+
+        echo Installing Terraform...
+        if exist "C:\Windows\System32" (
+            move /Y terraform.exe C:\Windows\System32\ > nul 2>&1
+            if !ERRORLEVEL! NEQ 0 (
+                echo Error: Failed to install Terraform to System32. Trying current directory...
+                set "PATH=%PATH%;%CD%"
+            ) else (
+                echo Terraform installed successfully to System32.
+            )
+        ) else (
+            echo System32 not accessible. Using current directory...
+            set "PATH=%PATH%;%CD%"
+        )
+        
+        del /F /Q terraform.zip
+        set "USE_TERRAFORM=1"
         
         REM Verify Terraform is now available
         where terraform > nul 2>&1
         if !ERRORLEVEL! NEQ 0 (
             echo Error: Terraform installation succeeded but command not found.
-            echo Please close this window and run the script again.
-            exit /b 1
+            echo Please ensure Terraform is in your PATH.
+            set "USE_TERRAFORM=0"
+            goto :skip_terraform
         )
         
         terraform --version
-    ) else if "!TERRAFORM_CHOICE!"=="2" (
-        echo Skipping Terraform installation and continuing with deployment...
-        set "USE_TERRAFORM=0"
-        goto :skip_terraform
-    ) else if "!TERRAFORM_CHOICE!"=="3" (
-        echo Please install Terraform manually:
-        echo 1. Download from: https://www.terraform.io/downloads.html
-        echo 2. Add to your system PATH
-        echo 3. Run setup.bat again
-        exit /b 1
+    ) else (
+        echo Options:
+        echo [1] Automatic installation ^(will install Chocolatey if needed^)
+        echo [2] Skip Terraform and continue with deployment
+        echo [3] Exit and install Terraform manually
+        echo.
+        choice /C 123 /N /M "Enter your choice (1-3): "
+        set TERRAFORM_CHOICE=!ERRORLEVEL!
+        
+        if "!TERRAFORM_CHOICE!"=="1" (
+            REM Check if Chocolatey is installed
+            where choco > nul 2>&1
+            if !ERRORLEVEL! NEQ 0 (
+                echo Chocolatey not found. Installing Chocolatey...
+                echo This will require administrator privileges.
+                echo.
+                powershell -Command "Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
+                if !ERRORLEVEL! NEQ 0 (
+                    echo Error: Failed to install Chocolatey.
+                    echo Please run this script as administrator or install Terraform manually.
+                    exit /b 1
+                )
+                echo Chocolatey installed successfully.
+                
+                REM Refresh environment variables
+                echo Refreshing environment variables...
+                call refreshenv
+                
+                REM Verify Chocolatey is now available
+                where choco > nul 2>&1
+                if !ERRORLEVEL! NEQ 0 (
+                    echo Error: Chocolatey installation succeeded but command not found.
+                    echo Please close this window and run the script again as administrator.
+                    exit /b 1
+                )
+            )
+            
+            echo Installing Terraform using Chocolatey...
+            choco install terraform -y
+            if !ERRORLEVEL! NEQ 0 (
+                echo Error: Failed to install Terraform using Chocolatey.
+                echo Please try running the script as administrator.
+                set "USE_TERRAFORM=0"
+                goto :skip_terraform
+            )
+            echo Terraform installed successfully.
+            
+            REM Refresh environment variables
+            echo Refreshing environment variables...
+            call refreshenv
+            
+            REM Update PATH for current session
+            for /f "tokens=*" %%i in ('where terraform') do set "TERRAFORM_PATH=%%i"
+            if not "!TERRAFORM_PATH!"=="" (
+                set "PATH=%PATH%;%TERRAFORM_PATH%"
+                echo Added Terraform to current session PATH
+            )
+            
+            REM Verify Terraform is now available
+            where terraform > nul 2>&1
+            if !ERRORLEVEL! NEQ 0 (
+                echo Error: Terraform installation succeeded but command not found.
+                echo Please close this window and run the script again.
+                exit /b 1
+            )
+            
+            terraform --version
+            set "USE_TERRAFORM=1"
+        ) else if "!TERRAFORM_CHOICE!"=="2" (
+            echo Skipping Terraform installation and continuing with deployment...
+            set "USE_TERRAFORM=0"
+            goto :skip_terraform
+        ) else if "!TERRAFORM_CHOICE!"=="3" (
+            echo Please install Terraform manually:
+            echo 1. Download from: https://www.terraform.io/downloads.html
+            echo 2. Add to your system PATH
+            echo 3. Run setup.bat again
+            exit /b 1
+        )
     )
+) else (
+    set "USE_TERRAFORM=1"
 )
+
+:skip_terraform
 
 REM Check GCP authentication
 echo [DEBUG] Starting GCP authentication check...
@@ -317,8 +372,6 @@ if "%NON_INTERACTIVE%"=="1" (
 )
 
 cd ..
-
-:skip_terraform
 
 REM Check if virtual environment exists
 if exist venv (
