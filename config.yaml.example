@@ -26,6 +26,10 @@ cloud_function:
   timeout: 540
   entry_point: process_transactions
   source_path: gs://${PROJECT_ID}-functions/function-code.zip
+  environment_variables:
+    GOOGLE_CLOUD_PROJECT: ${project.id}
+    CONFIG_PATH: "config.yaml"
+    ENVIRONMENT: ${project.use_free_tier ? "free_tier" : "standard"}
   exclude_patterns:
     - sample_code/
     - tests/

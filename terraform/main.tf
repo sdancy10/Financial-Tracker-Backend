@@ -124,9 +124,8 @@ resource "google_cloudfunctions_function" "transaction_processor" {
   }
 
   environment_variables = {
-    GOOGLE_CLOUD_PROJECT = local.config.project.id
-    CONFIG_PATH         = "config.yaml"
-    ENVIRONMENT         = local.use_free_tier ? "free_tier" : "standard"
+    for key, value in local.config.cloud_function.environment_variables:
+    key => replace(replace(value, "${project.id}", local.config.project.id), "${project.use_free_tier ? \"free_tier\" : \"standard\"}", local.use_free_tier ? "free_tier" : "standard")
   }
 
   depends_on = [
