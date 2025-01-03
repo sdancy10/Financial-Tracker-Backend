@@ -1,10 +1,13 @@
 steps:
   # Activate service account
   - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
     args:
-      - 'auth'
-      - 'activate-service-account'
-      - '--key-file=${_SERVICE_ACCOUNT_KEY}'
+      - '-c'
+      - |
+        echo "$$SERVICE_ACCOUNT_KEY" > /workspace/service-account.json
+        gcloud auth activate-service-account --key-file=/workspace/service-account.json
+    secretEnv: ['SERVICE_ACCOUNT_KEY']
 
   # Run setup.sh using google/cloud-sdk image which has both Python and gcloud
   - name: 'google/cloud-sdk:latest'
@@ -14,6 +17,7 @@ steps:
       - 'CLOUD_BUILD=1'
       - 'NON_INTERACTIVE=1'
       - 'PYTHONUNBUFFERED=1'
+      - 'GOOGLE_APPLICATION_CREDENTIALS=/workspace/service-account.json'
     id: 'run-setup'
 
 timeout: '1800s'  # 30 minutes
