@@ -27,18 +27,25 @@ steps:
         ls -la /workspace/terraform || echo "terraform directory not found"
         echo
         
-        # Create config.yaml from example
+        # Create config.yaml from example and replace placeholders
         echo "Creating config.yaml from example..."
         cp /workspace/config.yaml.example /workspace/config.yaml
+        
+        # Replace placeholders before YAML parsing
+        sed -i "s/%PROJECT_ID%/${_PROJECT_ID}/g" /workspace/config.yaml
+        sed -i "s/%REGION%/${_REGION}/g" /workspace/config.yaml
+        
+        # Create temporary Python script for config reading that handles placeholders
+        echo "import yaml" > read_config.py
+        echo "with open('config.yaml', 'r') as f:" >> read_config.py
+        echo "    config = yaml.safe_load(f)" >> read_config.py
+        echo "print('PROJECT_ID=' + str(config['gcp']['project_id']).strip())" >> read_config.py
+        echo "print('REGION=' + str(config['gcp']['region']).strip())" >> read_config.py
         
         # Create training data from example
         echo "Creating training data from example..."
         mkdir -p /workspace/data/training
         cp /workspace/data/training/transaction_categorizations.example.xlsx /workspace/data/training/transaction_categorizations.xlsx
-        
-        # Update project-specific values
-        sed -i "s/YOUR_PROJECT_ID/${_PROJECT_ID}/g" /workspace/config.yaml
-        sed -i "s/YOUR_REGION/${_REGION}/g" /workspace/config.yaml
         
         # Install required system packages
         echo "Installing system packages..."
