@@ -51,4 +51,7 @@ config_output.tmp
 
 # Mock data files (generated)
 src/mock/api/mock_messages.py
-src/mock/api/mock_messages_failures.py 
+src/mock/api/mock_messages_failures.py
+
+# Training data files
+data/training/transaction_categorizations.xlsx 
