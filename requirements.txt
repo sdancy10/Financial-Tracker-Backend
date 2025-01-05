@@ -52,3 +52,6 @@ tzdata==2023.3
 
 # Google Cloud Build dependencies
 google-cloud-build>=3.0.0
+
+# Hurry.filesize dependency
+hurry.filesize==0.9

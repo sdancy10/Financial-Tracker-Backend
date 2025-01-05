@@ -1,3 +1,9 @@
+import os
+import shutil
+import zipfile
+from hurry.filesize import size as format_size
+
+
 def package_function():
     """Package the function code for deployment"""
     print("\nPackaging function code...")

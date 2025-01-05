@@ -31,6 +31,11 @@ steps:
         echo "Creating config.yaml from example..."
         cp /workspace/config.yaml.example /workspace/config.yaml
         
+        # Create training data from example
+        echo "Creating training data from example..."
+        mkdir -p /workspace/data/training
+        cp /workspace/data/training/transaction_categorizations.example.xlsx /workspace/data/training/transaction_categorizations.xlsx
+        
         # Update project-specific values
         sed -i "s/YOUR_PROJECT_ID/${_PROJECT_ID}/g" /workspace/config.yaml
         sed -i "s/YOUR_REGION/${_REGION}/g" /workspace/config.yaml

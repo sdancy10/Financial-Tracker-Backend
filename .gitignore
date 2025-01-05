@@ -47,11 +47,12 @@ override.tf.json
 terraform.rc
 auth_output.tmp
 config_output.tmp
-*.tmp 
+*.tmp
 
 # Mock data files (generated)
 src/mock/api/mock_messages.py
 src/mock/api/mock_messages_failures.py
 
 # Training data files
-data/training/transaction_categorizations.xlsx 
+data/training/transaction_categorizations.xlsx
+!data/training/transaction_categorizations.example.xlsx
