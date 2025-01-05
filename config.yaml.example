@@ -1,11 +1,11 @@
-gcp:
-  project_id: "YOUR_PROJECT_ID"
-  region: "YOUR_REGION"
-  service_account_key_path: "credentials/service-account-key.json"
+project:
+  id: %PROJECT_ID%
+  region: %REGION%
+  use_free_tier: false  # Enable free tier resource limits
 
 features:
   enabled_services:
-    cloud_run: false      # Cloud Run API and services
+    cloud_api: false      # Cloud Run API and services
     cloud_functions: true # Cloud Functions API and services
     cloud_build: true    # Cloud Build API and triggers
     storage: true        # Cloud Storage API and buckets
@@ -14,23 +14,92 @@ features:
     firestore: true     # Firestore API
     secrets: true       # Secret Manager API and secrets
 
+gcp:
+  project_id: %PROJECT_ID%
+  region: %REGION%
+  service_account_key_path: "credentials/service-account-key.json"
+
+pubsub:
+  topics:
+    transactions: "scheduled-transactions"  # Name of the transactions topic
+
+scheduler:
+  jobs:
+    transaction_processor:
+      name: "process-scheduled-transactions"
+      description: "Triggers transaction processing on a schedule"
+  transaction_sync:
+    schedule: "*/10 * * * *"  # Run every 10 minutes
+    timezone: "America/Chicago"
+    retry_count: 3
+    retry_interval: 300  # 5 minutes between retry attempts
+    timeout: 540  # Maximum time a single Cloud Function execution can run
+
+cloud_build:
+  triggers:
+    auto_deploy:
+      name: "auto-deploy-trigger"
+      description: "Trigger auto-deployment on main branch pushes"
+      github:
+        owner: "%GITHUB_USERNAME%"
+        repository: "%REPOSITORY_NAME%"
+        branch: "^main$"
+  secrets:
+    service_account_key: "service-account-key"
+
+data:
+  bucket_name: "%PROJECT_ID%-data"
+  sync_interval: 3600  # seconds
+  ml_artifacts_bucket: "%PROJECT_ID%-ml-artifacts"
+  credentials:
+    secret_pattern: "gmail-credentials-%USER_ID%-%EMAIL%"
+    default_secret: "google-credentials-default"
+    firebase_secret: "firebase-credentials-default"
+    gmail_secret: "gmail-credentials"
+  user_batch_size: 10  # Process users in batches
+  transaction_batch_size: 100  # Transactions per batch
+  transaction:
+    batch_size: 500
+    status_values:
+      - pending
+      - processed
+      - failed
+    required_fields:
+      - id
+      - date
+      - description
+      - amount
+      - account_id
+      - user_id
+
 storage:
   buckets:
-    data: YOUR_PROJECT_ID-data
-    ml_artifacts: YOUR_PROJECT_ID-ml-artifacts
-    functions: YOUR_PROJECT_ID-functions
-  location: "us-central1"
+    data: "%PROJECT_ID%-data"
+    ml_artifacts: "%PROJECT_ID%-ml-artifacts"
+    functions: "%PROJECT_ID%-functions"
+  location: %REGION%
+
+model:
+  training_file: transaction_categorizations.xlsx
+  model_name: transaction_categorization_model
+
+cloud_run:
+  service_name: transaction-api
+  min_instances: 1
+  max_instances: 10
+  cpu_utilization: 0.65
+  instance_class: F1
+  container_image: "gcr.io/%PROJECT_ID%/transaction-api:latest"
 
 cloud_function:
   name: transaction-processor
   runtime: python310
-  timeout: 540
+  timeout: 540  # seconds
   entry_point: process_transactions
-  source_path: gs://${PROJECT_ID}-functions/function-code.zip
+  source_path: "gs://%PROJECT_ID%-functions/function-code.zip"
   environment_variables:
-    GOOGLE_CLOUD_PROJECT: project.id
+    GOOGLE_CLOUD_PROJECT: "%PROJECT_ID%"
     CONFIG_PATH: config.yaml
-    ENVIRONMENT: project.tier
   exclude_patterns:
     - sample_code/
     - tests/
@@ -48,48 +117,53 @@ cloud_function:
     - docs/
     - notebooks/
 
-cloud_run:
-  service_name: transaction-api
-  min_instances: 1
-  max_instances: 10
-  cpu_utilization: 0.65
-  instance_class: F1
-  container_image: gcr.io/${PROJECT_ID}/transaction-api:latest
+auth:
+  # Gmail IMAP settings
+  gmail:
+    service_url: "imap.gmail.com"
+    port: 993
+    scopes:
+      - "https://www.googleapis.com/auth/gmail.readonly"
+      - "https://www.googleapis.com/auth/gmail.modify"
+    token_uri: "https://oauth2.googleapis.com/token"
+    email_to_account:
+      "%EMAIL%": "%ACCOUNT_NAME%"
+    accounts:
+      %ACCOUNT_NAME%:
+        user_id: "%USER_ID%"
+        description: "%USER_NAME%"
+        credentials_file: "credentials/gmail_oauth_credentials_%ACCOUNT_NAME%.json"
 
-scheduler:
-  transaction_sync:
-    schedule: "*/10 * * * *"
-    timezone: "America/Chicago"
-    retry_count: 3
-    retry_interval: 300
-    timeout: 540
-
-testing:
-  run_after_deployment: true
-  run_all_tests: false
-  wait_time: 10
-  test_order:
-    - unit_tests
-    - package_tests
-  components:
-    unit_tests: true
-    package_tests: true
-    config_tests: false
-    integration_tests: false
-    function: true
-    scheduler: false
-    pubsub: false
-    http: false
-    pubsub_trigger: false
-  test_paths:
-    unit_tests:
-      - tests/test_gmail_integration.py
-      - tests/test_transaction_parser.py
-    package_tests:
-      - scripts/test_deployment_package.py
-    post_deployment:
-      - scripts/test_function.py
+  # Firebase settings
+  firebase:
+    service_url: "https://identitytoolkit.googleapis.com/v1/accounts"
 
 logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s" 
+  level: "INFO"  # INFO|DEBUG|WARNING
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+testing:
+  run_after_deployment: true  # Whether to run tests after deployment
+  run_all_tests: false  # Whether to run all available tests
+  wait_time: 10  # Seconds to wait for function to be ready before testing
+  test_order:  # Defines the logical order of test execution
+    - unit_tests  # Run unit tests before deployment
+    - package_tests  # Run package tests before deployment
+  components:  # Which components to test
+    unit_tests: true  # Run unit tests
+    package_tests: true  # Run package tests
+    config_tests: false  # Skip config tests
+    integration_tests: false  # Skip integration tests
+    function: true  # Test deployed function
+    scheduler: false  # Skip scheduler tests
+    pubsub: false  # Skip pub/sub tests
+    http: false  # Skip HTTP tests
+    pubsub_trigger: false  # Skip pub/sub trigger tests
+  test_paths:  # Paths to test files
+    unit_tests:  # Unit tests to run before deployment
+      - tests/test_gmail_integration.py
+      - tests/test_transaction_parse.py
+    package_tests:  # Package tests to run before deployment
+      - scripts/test_deployment_package.py
+    post_deployment:  # Tests to run after deployment
+      - scripts/test_function.py 

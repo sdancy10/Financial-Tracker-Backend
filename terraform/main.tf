@@ -1,85 +1,57 @@
 provider "google" {
-  project = "shanedancy-9f2a3"
-  region  = "us-central1"
+  project = local.project_id
+  region  = local.region
   credentials = "${path.module}/../credentials/service-account-key.json"
-}
-
-locals {
-  use_free_tier = try(local.config.project.use_free_tier, false)
-  
-  # Get enabled services from config
-  enabled_services = try(local.config.features.enabled_services, {
-    cloud_api: false,
-    cloud_functions: true,
-    storage: true,
-    pubsub: true,
-    scheduler: true,
-    firestore: true,
-    secrets: true
-  })
-
-  # Service account configurations
-  service_accounts = {
-    cloud_build = "${data.google_project.project.number}@cloudbuild.gserviceaccount.com"
-    app_engine  = "${local.config.gcp.project_id}@appspot.gserviceaccount.com"
-  }
-
-  # Map of APIs to their feature flags
-  api_service_map = {
-    "cloudrun.googleapis.com": local.enabled_services.cloud_api,
-    "cloudfunctions.googleapis.com": local.enabled_services.cloud_functions,
-    "storage.googleapis.com": local.enabled_services.storage,
-    "containerregistry.googleapis.com": local.enabled_services.cloud_api || local.enabled_services.cloud_functions,
-    "cloudbuild.googleapis.com": local.enabled_services.cloud_api || local.enabled_services.cloud_functions || local.enabled_services.cloud_build,
-    "pubsub.googleapis.com": local.enabled_services.pubsub,
-    "firestore.googleapis.com": local.enabled_services.firestore,
-    "secretmanager.googleapis.com": local.enabled_services.secrets,
-    "cloudscheduler.googleapis.com": local.enabled_services.scheduler,
-    "aiplatform.googleapis.com": true  # Always enabled for future ML features
-  }
-
-  # Filter to only enabled APIs
-  enabled_apis = {
-    for api, enabled in local.api_service_map:
-    api => enabled if enabled
-  }
-  
-  # Resource configurations based on tier
-  resource_config = {
-    cloud_function = local.use_free_tier ? {
-      memory    = 128  # 128MB is in free tier
-      timeout   = 60   # 60 seconds
-      schedule  = "0 */12 * * *"  # Every 12 hours for free tier
-      retries   = 1
-    } : {
-      memory    = 256
-      timeout   = local.config.cloud_function.timeout
-      schedule  = local.config.scheduler.transaction_sync.schedule
-      retries   = local.config.scheduler.transaction_sync.retry_count
-    }
-    cloud_run = local.use_free_tier ? {
-      memory        = "128Mi"  # 128MB
-      cpu          = "0.1"    # 0.1 vCPU
-      min_instances = 0       # Scale to zero
-      max_instances = 1       # Max 1 instance
-    } : {
-      memory        = "256Mi"
-      cpu          = "1000m"
-      min_instances = local.config.cloud_run.min_instances
-      max_instances = local.config.cloud_run.max_instances
-    }
-    storage = local.use_free_tier ? {
-      location = "US"  # Multi-region US for free tier
-      lifecycle_age = 30  # Auto-delete after 30 days
-    } : {
-      location = local.config.gcp.region
-      lifecycle_age = null  # No auto-deletion
-    }
-  }
 }
 
 # Get project data
 data "google_project" "project" {}
+
+# Gmail OAuth credentials secrets - one for each account
+resource "google_secret_manager_secret" "gmail_oauth" {
+  for_each = local.enabled_services.secrets ? local.config_raw.auth.gmail.accounts : {}
+  
+  secret_id = format("gmail-credentials-%s-%s",
+    lower(each.value.user_id),
+    replace(
+      replace(
+        base64encode(
+          [for email, account in local.config_raw.auth.gmail.email_to_account : email if account == each.key][0]
+        ),
+        "-", "_"
+      ),
+      "=", ""
+    )
+  )
+
+  replication {
+    user_managed {
+      replicas {
+        location = local.region
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_service.required_apis
+  ]
+}
+
+# Gmail OAuth credentials versions - one for each account
+resource "google_secret_manager_secret_version" "gmail_oauth" {
+  for_each = local.enabled_services.secrets ? local.config_raw.auth.gmail.accounts : {}
+  
+  secret = google_secret_manager_secret.gmail_oauth[each.key].id
+  secret_data = jsonencode({
+    client_id     = local.gmail_user_credentials[each.key].client_id
+    client_secret = local.gmail_user_credentials[each.key].client_secret
+    refresh_token = local.gmail_user_credentials[each.key].refresh_token
+    token_uri     = local.config_raw.auth.gmail.token_uri
+    scopes        = local.config_raw.auth.gmail.scopes
+    email         = [for email, account in local.config_raw.auth.gmail.email_to_account : email if account == each.key][0]
+    user_id       = each.value.user_id
+  })
+}
 
 # Enable required APIs
 resource "google_project_service" "required_apis" {
@@ -93,7 +65,7 @@ resource "google_project_service" "required_apis" {
 resource "google_storage_bucket" "ml_artifacts_bucket" {
   count = local.enabled_services.storage ? 1 : 0
   
-  name     = local.config.storage.buckets.ml_artifacts
+  name     = local.storage.buckets.ml_artifacts
   location = local.resource_config.storage.location
   uniform_bucket_level_access = true
 }
@@ -101,7 +73,7 @@ resource "google_storage_bucket" "ml_artifacts_bucket" {
 resource "google_storage_bucket" "functions_bucket" {
   count = local.enabled_services.cloud_functions ? 1 : 0
   
-  name     = local.config.storage.buckets.functions
+  name     = local.storage.buckets.functions
   location = local.resource_config.storage.location
   uniform_bucket_level_access = true
 }
@@ -109,22 +81,21 @@ resource "google_storage_bucket" "functions_bucket" {
 # Pub/Sub topic for transaction processing
 resource "google_pubsub_topic" "transaction_topic" {
   count = local.enabled_services.pubsub ? 1 : 0
-  
-  name = "scheduled-transactions"
+  name = local.pubsub.topics.transactions
 }
 
 # Cloud Function
 resource "google_cloudfunctions_function" "transaction_processor" {
   count = local.enabled_services.cloud_functions ? 1 : 0
   
-  name        = local.config.cloud_function.name
+  name        = local.cloud_function.name
   description = "Processes financial transactions"
-  runtime     = local.config.cloud_function.runtime
+  runtime     = local.cloud_function.runtime
 
   available_memory_mb   = local.resource_config.cloud_function.memory
   source_archive_bucket = google_storage_bucket.functions_bucket[0].name
   source_archive_object = "function-source.zip"
-  entry_point          = local.config.cloud_function.entry_point
+  entry_point          = local.cloud_function.entry_point
   timeout             = local.resource_config.cloud_function.timeout
 
   event_trigger {
@@ -132,7 +103,13 @@ resource "google_cloudfunctions_function" "transaction_processor" {
     resource   = google_pubsub_topic.transaction_topic[0].name
   }
 
-  environment_variables = local.processed_env_vars
+  environment_variables = merge(
+    local.processed_env_vars,
+    {
+      PROJECT_ID = local.project_id
+      REGION     = local.region
+    }
+  )
 
   depends_on = [
     google_project_service.required_apis
@@ -143,15 +120,14 @@ resource "google_cloudfunctions_function" "transaction_processor" {
 resource "google_cloud_scheduler_job" "transaction_scheduler" {
   count = local.enabled_services.scheduler ? 1 : 0
   
-  name             = "process-scheduled-transactions"
-  description      = "Triggers transaction processing on a schedule"
+  name             = local.scheduler.jobs.transaction_processor.name
+  description      = local.scheduler.jobs.transaction_processor.description
   schedule         = local.resource_config.cloud_function.schedule
-  time_zone        = local.config.scheduler.transaction_sync.timezone
-  attempt_deadline = "${local.config.cloud_function.timeout}s"
+  time_zone        = local.scheduler.transaction_sync.timezone
 
   retry_config {
     retry_count = local.resource_config.cloud_function.retries
-    min_backoff_duration = "${local.config.scheduler.transaction_sync.retry_interval}s"
+    min_backoff_duration = "${local.scheduler.transaction_sync.retry_interval}s"
   }
 
   pubsub_target {
@@ -168,13 +144,13 @@ resource "google_cloud_scheduler_job" "transaction_scheduler" {
 resource "google_cloud_run_service" "transaction_api" {
   count = local.enabled_services.cloud_api ? 1 : 0
   
-  name     = local.config.cloud_run.service_name
-  location = local.config.project.region
+  name     = local.cloud_run.service_name
+  location = local.region
 
   template {
     spec {
       containers {
-        image = local.config.cloud_run.container_image
+        image = local.cloud_run.container_image
         resources {
           limits = {
             cpu    = local.resource_config.cloud_run.cpu
@@ -183,7 +159,7 @@ resource "google_cloud_run_service" "transaction_api" {
         }
         env {
           name  = "GOOGLE_CLOUD_PROJECT"
-          value = local.config.project.id
+          value = local.project_id
         }
         env {
           name  = "CONFIG_PATH"
@@ -221,7 +197,7 @@ resource "google_cloud_run_service_iam_member" "public_access" {
   count = local.enabled_services.cloud_api ? 1 : 0
   
   service  = google_cloud_run_service.transaction_api[0].name
-  location = google_cloud_run_service.transaction_api[0].location
+  location = local.region
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
@@ -230,12 +206,12 @@ resource "google_cloud_run_service_iam_member" "public_access" {
 resource "google_secret_manager_secret" "default_credentials" {
   count = local.enabled_services.secrets ? 1 : 0
   
-  secret_id = local.config.data.credentials.default_secret
+  secret_id = local.config_raw.data.credentials.default_secret
 
   replication {
     user_managed {
       replicas {
-        location = local.config.project.region
+        location = local.region
       }
     }
   }
@@ -248,12 +224,12 @@ resource "google_secret_manager_secret" "default_credentials" {
 resource "google_secret_manager_secret" "firebase_credentials" {
   count = local.enabled_services.secrets ? 1 : 0
   
-  secret_id = local.config.data.credentials.firebase_secret
+  secret_id = local.config_raw.data.credentials.firebase_secret
 
   replication {
     user_managed {
       replicas {
-        location = local.config.project.region
+        location = local.region
       }
     }
   }
@@ -267,22 +243,22 @@ resource "google_secret_manager_secret" "firebase_credentials" {
 resource "google_cloudbuild_trigger" "auto_deploy" {
   count = local.enabled_services.cloud_build ? 1 : 0  # Only create if cloud_build is enabled
   
-  name        = "auto-deploy-trigger"
-  description = "Trigger auto-deployment on main branch pushes"
+  name        = local.cloud_build.triggers.auto_deploy.name
+  description = local.cloud_build.triggers.auto_deploy.description
   
   github {
-    owner = "sdancy10"
-    name  = "Financial-Tracker-Backend"
+    owner = local.cloud_build.triggers.auto_deploy.github.owner
+    name  = local.cloud_build.triggers.auto_deploy.github.repository
     push {
-      branch = "^main$"
+      branch = local.cloud_build.triggers.auto_deploy.github.branch
     }
   }
 
   filename = "cloudbuild.yaml"
   
   substitutions = {
-    _PROJECT_ID = local.config.project.id
-    _REGION     = local.config.project.region
+    _PROJECT_ID = local.project_id
+    _REGION     = local.region
   }
 
   depends_on = [
@@ -315,12 +291,12 @@ output "functions_bucket" {
 resource "google_secret_manager_secret" "cloud_build_sa_key" {
   count = local.enabled_services.cloud_build ? 1 : 0
   
-  secret_id = "service-account-key"
+  secret_id = local.cloud_build.secrets.service_account_key
 
   replication {
     user_managed {
       replicas {
-        location = local.config.project.region
+        location = local.region
       }
     }
   }
@@ -346,7 +322,7 @@ resource "google_secret_manager_secret_version" "cloud_build_sa_key" {
 resource "google_project_iam_member" "cloud_build_sa" {
   count = local.enabled_services.cloud_build ? 1 : 0
   
-  project = local.config.project.id
+  project = local.project_id
   role    = "roles/cloudbuild.builds.builder"
   member  = "serviceAccount:${local.service_accounts.cloud_build}"
 
@@ -357,15 +333,77 @@ resource "google_project_iam_member" "cloud_build_sa" {
 
 resource "google_project_iam_member" "cloud_build_terraform" {
   count   = local.enabled_services.cloud_build ? 1 : 0
-  project = data.google_project.project.project_id
+  project = local.project_id
   role    = "roles/editor"
-  member  = "serviceAccount:${data.google_project.project.number}@cloudbuild.gserviceaccount.com"
+  member  = "serviceAccount:${local.service_accounts.cloud_build}"
 }
 
 # Add Secret Manager access for Cloud Build
 resource "google_project_iam_member" "cloud_build_secret_accessor" {
   count   = local.enabled_services.cloud_build ? 1 : 0
-  project = data.google_project.project.project_id
+  project = local.project_id
   role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${data.google_project.project.number}@cloudbuild.gserviceaccount.com"
-} 
+  member  = "serviceAccount:${local.service_accounts.cloud_build}"
+}
+
+# IAM for Cloud Run service
+resource "google_cloud_run_service_iam_member" "cloud_build_invoker" {
+  count = local.enabled_services.cloud_api ? 1 : 0
+  
+  service  = google_cloud_run_service.transaction_api[0].name
+  location = local.region
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${local.service_accounts.cloud_build}"
+  project   = local.project_id
+}
+
+# IAM for Cloud Function to access and create secrets
+resource "google_project_iam_member" "function_secret_admin" {
+  count   = local.enabled_services.cloud_functions && local.enabled_services.secrets ? 1 : 0
+  project = local.project_id
+  role    = "roles/secretmanager.admin"  # This allows creating secrets and managing their versions
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# Remove all other Secret Manager IAM bindings for the Cloud Function service account
+# The admin role above provides all necessary permissions
+
+# Secret Manager IAM for Cloud Build
+resource "google_secret_manager_secret_iam_member" "cloud_build_secret_access" {
+  count = local.enabled_services.secrets ? 1 : 0
+  
+  secret_id = google_secret_manager_secret.default_credentials[0].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${local.service_accounts.cloud_build}"
+  project   = local.project_id
+}
+
+# IAM binding for Cloud Function to access secrets
+resource "google_project_iam_member" "function_secretmanager" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for python-etl service account to access secrets
+resource "google_project_iam_member" "python_etl_secretmanager" {
+  count = local.enabled_services.secrets ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${local.service_accounts.python_etl}"
+}
+
+# IAM binding for Cloud Function to access Firestore/Datastore
+resource "google_project_iam_member" "function_datastore" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# Note: Individual Gmail credential secrets will be created dynamically by the application
+# using the pattern: gmail-credentials-{user_id}-{email} 

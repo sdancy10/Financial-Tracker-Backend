@@ -117,7 +117,7 @@ sequenceDiagram
 - **Trigger**: Pub/Sub messages
 - **Scope**: Last 24 hours of emails
 - **Specifications**:
-  - Runtime: Python 3.9
+  - Runtime: Python 3.10
   - Memory: 256MB
   - Timeout: 540s (9 minutes)
 
@@ -127,6 +127,7 @@ sequenceDiagram
 - Processed transactions
 - Transaction categories
 - Template mappings
+- Email API IDs
 
 #### Cloud Storage
 - Email parsing templates
@@ -183,3 +184,42 @@ sequenceDiagram
    - Caching
    - Batch processing
    - Enhanced Pub/Sub with DLQ 
+
+## Component Details
+
+### Email Processing
+
+#### Email API ID System
+- Unique identifier tracking
+- Duplicate detection
+- Processing history
+- Cross-reference capabilities
+
+#### Template System
+- Pattern-based matching
+- Dynamic field extraction
+- Validation rules
+- Mock template generation
+
+### Testing Infrastructure
+
+#### Mock Data Generation
+- Template-based mock emails
+- Synthetic transaction data
+- Failure case simulation
+- API response mocking
+
+#### Testing Framework
+- Unit test suite
+- Integration tests
+- Template validation
+- Mock data verification
+
+### Deployment Pipeline
+
+#### Cloud Deployment
+- Automated deployment process
+- Environment configuration
+- Cloud service linking
+- Credential management
+- Version control integration 

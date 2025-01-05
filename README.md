@@ -11,17 +11,21 @@ A serverless application that automatically processes financial transaction emai
 - 🔄 Automated scheduled processing
 - 🎯 Template-based transaction parsing
 - 🏗️ Infrastructure as Code with Terraform
+- 🧪 Mock data generation for testing
+- 🆔 Email API ID tracking
+- ✨ Advanced template matching system
 
 ## Documentation
 
 - [Architecture Overview](ARCHITECTURE.md) - System design and component interactions
 - [Setup Guide](SETUP.md) - Detailed setup and deployment instructions
 - [Credential Management](CREDENTIAL_MANAGEMENT.md) - Guide for managing OAuth and service account credentials
+- [Testing Guide](TESTING.md) - Comprehensive testing and mock data generation guide
 
 ## Quick Start
 
 1. **Prerequisites**
-   - Python 3.9+
+   - Python 3.10+
    - Google Cloud SDK
    - Terraform
    - Active Google Cloud Project
@@ -57,13 +61,26 @@ For detailed setup instructions, see [SETUP.md](SETUP.md).
 ```bash
 # Install dependencies
 pip install -r requirements.txt
+pip install -r requirements-test.txt  # For testing dependencies
+
+# Configure your settings
+cp config.yaml.example config.yaml
+# Edit config.yaml with your settings (required for mock data generation)
+
+# Generate mock data for testing (replace with your values)
+python scripts/generate_mock_template_messages.py \
+    --email your.email@example.com \
+    --start-date 2024-01-01
 
 # Run tests
-python -m pytest tests/
+python -m pytest tests/  # Most tests use mock credentials automatically
+python -m pytest tests/test_gmail_integration.py  # Requires real Gmail credentials
 
 # Run local server
 python src/main.py
 ```
+
+> **Note**: Most tests use mock credentials and can run without any additional setup. Only Gmail API integration tests require real credentials configured in config.yaml. The mock data generation script requires a valid email address from your config.yaml to generate realistic test data.
 
 ## Support and Troubleshooting
 

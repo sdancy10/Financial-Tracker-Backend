@@ -19,9 +19,17 @@ class StorageDeployer:
         
         # Get bucket names from config
         storage_config = self.config.get('storage', 'buckets')
+        if not storage_config:
+            self.logger.warning("No storage configuration found, using default values from config")
+            storage_config = self.config.get('defaults', 'storage', {
+                'data': f"{self.project_id}-data",
+                'ml_artifacts': f"{self.project_id}-ml-artifacts",
+                'functions': f"{self.project_id}-functions"
+            })
+        
         self.logger.info(f"Raw storage config: {storage_config}")
-        self.data_bucket = storage_config.get('data')
-        self.ml_bucket = storage_config.get('ml_artifacts')
+        self.data_bucket = storage_config.get('data', f"{self.project_id}-data")
+        self.ml_bucket = storage_config.get('ml_artifacts', f"{self.project_id}-ml-artifacts")
         self.logger.info(f"Configured bucket names - data: '{self.data_bucket}', ml_artifacts: '{self.ml_bucket}'")
         
         # Initialize client

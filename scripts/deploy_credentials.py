@@ -76,32 +76,57 @@ class CredentialsDeployer:
                         return attrs
         return None
     
+    def _has_manual_updates(self) -> bool:
+        """Check if there are manual updates needed beyond Terraform"""
+        try:
+            # Get Gmail accounts from config
+            gmail_accounts = self.config.get('auth', 'gmail', 'accounts')
+            email_to_account = self.config.get('auth', 'gmail', 'email_to_account')
+            
+            if not gmail_accounts or not email_to_account:
+                return False
+            
+            # Check each user's credentials
+            for email, account_name in email_to_account.items():
+                if account_name in gmail_accounts:
+                    account_config = gmail_accounts[account_name]
+                    user_id = account_config['user_id']
+                    
+                    # Create secret ID
+                    secret_id = f"gmail-credentials-{user_id.lower()}-{base64.urlsafe_b64encode(email.encode()).decode().replace('-', '_').replace('=', '')}"
+                    if self.is_free_tier:
+                        secret_id += "-free"
+                    
+                    # If any secret is not in Terraform state, we need manual updates
+                    if not self._get_terraform_secret(secret_id):
+                        self.logger.info(f"Found manual update needed for {secret_id}")
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"Error checking for manual updates: {e}")
+            return True  # Assume updates needed on error
+    
     def deploy(self):
         """Deploy credentials to GCP Secret Manager"""
         try:
+            # Check if we should proceed with deployment
+            if self.is_terraform_managed:
+                self.logger.info("Credentials are managed by Terraform, checking for manual updates...")
+                if not self._has_manual_updates():
+                    self.logger.info("No manual updates needed, credentials are managed by Terraform")
+                    return True
+            
             self.logger.info("\n=== Deploying Credentials to Secret Manager ===")
             
-            # Initialize from service account credentials
-            service_account_path = self.config.get('gcp', 'service_account_key_path')
-            oauth_creds = self.cred_manager.initialize_from_file(service_account_path)
-            
-            # Deploy Google credentials if not managed by Terraform
-            if oauth_creds:
-                secret_id = "google-default-credentials"
-                if self.is_free_tier:
-                    secret_id += "-free"
-                
-                if not (self.is_terraform_managed and self._get_terraform_secret(secret_id)):
-                    self.cred_manager.store_default_credentials(
-                        'google',
-                        oauth_creds['user_nm'],
-                        oauth_creds['user_pw']
-                    )
-                    self.logger.info("Deployed Google credentials")
-            
-            # Deploy user-specific credentials from config
+            # Deploy user-specific Gmail credentials from config
             gmail_accounts = self.config.get('auth', 'gmail', 'accounts')
             email_to_account = self.config.get('auth', 'gmail', 'email_to_account')
+            
+            if not gmail_accounts or not email_to_account:
+                self.logger.info("No Gmail accounts configured, skipping credential deployment")
+                return True
             
             # Deploy credentials for each configured user
             for email, account_name in email_to_account.items():
@@ -124,7 +149,7 @@ class CredentialsDeployer:
                     
                     try:
                         # Create secret ID
-                        secret_id = f"gmail_credentials_{user_id.lower()}_{base64.urlsafe_b64encode(email.encode()).decode().replace('-', '_').replace('=', '')}"
+                        secret_id = f"gmail-credentials-{user_id.lower()}-{base64.urlsafe_b64encode(email.encode()).decode().replace('-', '_').replace('=', '')}"
                         if self.is_free_tier:
                             secret_id += "-free"
                         
@@ -133,30 +158,15 @@ class CredentialsDeployer:
                             self.logger.info(f"Secret {secret_id} is managed by Terraform")
                             continue
                         
-                        # Prepare secret data
-                        secret_data = {
-                            "username": account_creds['client_id'],
-                            "password": account_creds['client_secret'],
-                            "email": email,
-                            "client_id": account_creds['client_id'],
-                            "client_secret": account_creds['client_secret'],
-                            "refresh_token": account_creds['refresh_token'],
-                            "token_uri": account_creds['token_uri'],
-                            "scopes": account_creds['scopes']
-                        }
-                        self.logger.debug(f"Deploying secret data for {account_name}:")
-                        self.logger.debug(f"Keys being deployed: {list(secret_data.keys())}")
-                        
-                        # Store all credentials in Secret Manager
-                        success = self.cred_manager.deploy_to_secret_manager(
-                            secret_data=secret_data,
-                            secret_id=secret_id
+                        # Store Gmail credentials in Secret Manager
+                        self.cred_manager.store_user_gmail_credentials(
+                            user_id=user_id,
+                            email=email,
+                            username=account_creds['client_id'],
+                            password=account_creds['client_secret'],
+                            refresh_token=account_creds['refresh_token']
                         )
-                        
-                        if success:
-                            self.logger.info(f"Deployed credentials for user {user_id} ({email})")
-                        else:
-                            self.logger.error(f"Failed to deploy credentials for user {user_id} ({email})")
+                        self.logger.info(f"Deployed credentials for user {user_id} ({email})")
                         
                     except Exception as e:
                         self.logger.error(f"Error deploying credentials for {user_id} ({email}): {str(e)}")

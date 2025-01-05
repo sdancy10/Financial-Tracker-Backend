@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Iterator
 import logging
 import base64
 import re
@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from src.utils.config import Config
 from zoneinfo import ZoneInfo
 import platform
+import html
 from email.utils import parsedate_to_datetime
 
 class TransactionParser:
@@ -142,8 +143,8 @@ class TransactionParser:
         'Huntington Checking/Savings': {
             'iterate_results': False,
             'account': r'(?<=CK)(\d{4})',
-            'amount': r'(?<=for \$)(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\b(?=(?: at|$))',
-            'vendor': r'(?<= at )(.*?)(?= from)',
+            'amount': r'(?<=for\s\$)(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\b(?=(?:\s+(?:from|at)|$))',
+            'vendor': r'(?<=from\s)(.*?)(?=\s+to\s+)',
             'date': r'(?<=as of )(\d{1,2}\/\d{1,2}\/\d{2}\s+\d{1,2}:\d{2}\s+(?:AM|PM)\s+ET)'
         },
         'Target Credit Card': {
@@ -156,8 +157,8 @@ class TransactionParser:
         'US Bank - Credit Card': {
             'iterate_results': False,
             'account': r'(?<=card ending in )\d{4}',
-            'amount': r'(?<=charged \$)(.*)(?=  at)',
-            'vendor': r'(?<=at )(.*)(?=\. A)',
+            'amount': r'\$(\d+(?:\.\d+)?)',
+            'vendor': r'(?<=at )([^.]+)',
             'date': ''
         },
         'Chase Payment Sent': {
@@ -181,13 +182,21 @@ class TransactionParser:
             # match the subject line format:
             'subject_pattern': r'You sent \$[\d,.]+.*account ending in'
         },
+        'Capital One Credit Card': {
+            'iterate_results': False,
+            'account': r'(?:ending in|card ending in|last 4 #)\s*(\d{4})',
+            'amount': r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            'vendor': r'(?s),\s*at\s+([^,]+),',
+            'date': r'on\s+(\d{1,2}\/\d{1,2}\/\d{4})(?=,)'
+        },
         'Discover Credit Card': {
             'iterate_results': False,
-            'account': r'(?<=Last 4 #:&nbsp;)(\d{4})',
-            'amount': r'(?<=(\$))(.*)(?=<br\/>)',
-            'vendor': r'(?<=(Merchant: ))(.*)(?=<br\/>)',
-            'date': r'(?<=(Date: ))(.*)(?=<br\/>)'
+            'account': r'(?:Last 4 #:&nbsp;|Account ending in\s*)(\d{4})',
+            'amount': r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            'vendor': r'(?:Merchant:\s*|at\s+)([^<\n\r]+?)(?=(?:\s*<br\/>|\s*$|\s*,))',
+            'date': r'(?:Date:\s*|Transaction Date:\s*)([^<\n\r]+?)(?=(?:\s*<br\/>|\s*$))'
         },
+
         'Discover Transaction Alert': {
             'iterate_results': False,
             'account': r'Account ending in\s+(\d{4})',
@@ -213,17 +222,18 @@ class TransactionParser:
         },
         'Chase Test Format': {
             'iterate_results': False,
-            'account': r'(?<=card ending in )(\d+)',
-            'amount': r'\$([0-9,.]+)',
-            'vendor': r'(?<=made at )(.+?)(?= using)',
-            'date': ''
+            'account': r'(?:Account ending in[^(]*\(...|ending in)\s*(\d{4})',
+            'amount': r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            'vendor': r'(?:made at|transaction with|at\s+|Merchant:\s*|purchase at\s+)([^<\n\r.]+?)(?=(?:\s+using|\s*$|\s*,|\s*\.|<br/>|\s+on))',
+            'date': r'(?:on|Date:|Transaction Date:)\s*([^<\n\r]+?)(?=(?:\s*$|\s*<|\s*executed|<br/>))',
+            'subject_pattern': r'(?:Chase Alert)'  # Add subject pattern to help with matching
         },
         'Chase Sapphire Preferred': {
             'iterate_results': False,
             'account': r"(?:Chase [^(]+\(...(\d{4})\)|Account ending in[^<]*\(...(\d{4})\))",
-            'amount': r"(?:You made a \$(\d+(?:,\d{3})*(?:\.\d{2})?) transaction|You have a direct deposit of \$(\d+(?:,\d{3})*(?:\.\d{2})))",
-            'vendor': r"(?s)Merchant:\s*([^<\n\r]+)",
-            'date': r"(?:Date</td>.*?<td[^>]*>([^<]+)</td>)|(?:>([^<]+(?:AM|PM) ET)</td>)"
+            'amount': r"(\$\d+(?:,\d{3})*(?:\.\d{2}))",
+            'vendor': r"(?s)(?<=Merchant</td>).*?<td[^>]*>\s*(.*?)\s*</td>",
+            'date': r"Date<\/td>[\s\S]*?<td[^>]*>\s*(?:<[^>]+>\s*)*([^<]+(?:AM|PM)\sET)"
         },
         'Chase External Transfer': {
             'iterate_results': False,
@@ -253,26 +263,12 @@ class TransactionParser:
             'vendor': r'<td[^>]*>(?:<.*?>)*([^<]+)(?:<\/.*?>)*<\/td>',
             'date': ''
         },
-        'Chase Credit Cards - ??': {
-            'iterate_results': False,
-            'account': r'(?<=ending in )(\d*)(?=.)',
-            'amount': r'(?<=charge of \(\$...\) )(.*)(?= at (.*) on)',
-            'vendor': r'(?<=at )(.*)(?= has)',
-            'date': ''
-        },
-        'Capital One Credit Card': {
-            'iterate_results': False,
-            'account': r'(?<=Account ending in )[\d]{4}',
-            'amount': r'(?<=(\$))(.*)(?= was )',
-            'vendor': r'(?<= at )(.*)(?=, a)',
-            'date': ''
-        },
         'Huntington Checking/Savings Deposit': {
             'iterate_results': False,
-            'account': r'(?<=CK)(\d{4})',
-            'amount': r'(?<=for \$)(([0-9,.]+)*)',
-            'vendor': r'(?<= from )(.*)(?= to)',
-            'date': ''
+            'account': r'(?:CK|ending in|Last 4 #|Card ending in?\s*Card ending in|Account #|Account ending in|(?:account )?nicknamed CK)\s*(\d{4})',
+            'amount': r'(?:for )?\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            'vendor': r'(?:from\s+|at\s+|Merchant:\s*)([^<\n\r.]+?)(?=(?:\s+to|\s*$|\s*,|\s*\.|<br/>|\s+on))',
+            'date': r'(?:on|Date:|Transaction Date:|as of)\s*([^<\n\r]+?)(?=(?:\s*$|\s*<|\s*executed|<br/>))'
         },
         'Huntington Checking/Savings Deposit2': {
             'iterate_results': False,
@@ -310,7 +306,7 @@ class TransactionParser:
         try:
             # Extract message body and headers
             headers = message['payload']['headers']
-            body = self._get_message_body(message['payload'])
+            body, raw_body = self._get_message_body(message['payload'])
             
             # Get message IDs
             message_id = message.get('message_id')  # Original Message-ID from headers
@@ -326,7 +322,7 @@ class TransactionParser:
             self.logger.info(f"Body Preview: {body[:200]}...")
             
             # Find matching template
-            template_name, matches = self._find_matching_template(headers, body)
+            template_name, matches = self._find_matching_template(headers, body, raw_body)
             if not template_name or not matches:
                 self.logger.warning(f"No matching template found for message {gmail_id}")
                 return None
@@ -353,7 +349,8 @@ class TransactionParser:
             self.logger.info(f"  - Account: {transaction.get('account')}")
             self.logger.info(f"  - Date: {transaction.get('date')}")
             self.logger.info("====BODY====")
-            self.logger.info(f"{body}")
+            self.logger.info(f"{matches.get('body_type', 'unknown')} body used for matching")
+            self.logger.info(f"{matches.get('body', '')}")
             
             return transaction
         except Exception as e:
@@ -365,30 +362,130 @@ class TransactionParser:
     def _sanitize_body(self, body: str) -> str:
         """
         Remove potentially malicious or unwanted HTML/scripts/styles,
-        and return a cleaned version of the body text.
+        remove all HTML tags, and decode entities like &rsquo; or &#x2F;.
         """
+        if not body:
+            return ""
+            
         # Remove script tags and content
         body = re.sub(r'<script.*?>.*?</script>', '', body, flags=re.DOTALL | re.IGNORECASE)
+        
         # Remove style tags and content
         body = re.sub(r'<style.*?>.*?</style>', '', body, flags=re.DOTALL | re.IGNORECASE)
-        # Remove all other HTML tags
-        body = re.sub(r'<[^>]+>', '', body)
+        
+        # Remove all HTML comments
+        body = re.sub(r'<!--.*?-->', '', body, flags=re.DOTALL)
+        
+        # Remove all other HTML tags but preserve their content
+        body = re.sub(r'<[^>]+>', ' ', body)
+        
+        # Replace multiple spaces/newlines with single space
+        body = re.sub(r'\s+', ' ', body)
+        
+        # Decode HTML entities (e.g. &rsquo; -> ', &#x2F; -> /, &nbsp; -> space)
+        body = html.unescape(body)
+        
+        # Remove any remaining HTML-like artifacts
+        body = re.sub(r'&[a-zA-Z0-9#]+;', '', body)
+        
+        # Clean up any remaining special characters
+        body = re.sub(r'[^\x20-\x7E\n]', '', body)
+        
+        # Trim extra whitespace
+        body = body.strip()
+        
         return body
 
-    def _get_message_body(self, payload: Dict[str, Any]) -> str:
-        """Extract message body from Gmail API payload and sanitize it."""
+    def _get_message_body(self, payload: Dict[str, Any]) -> Tuple[str, str]:
+        """Extract message body from Gmail API payload and sanitize it.
+        Returns (sanitized_body, raw_body).
+        """        
+        def find_html_parts(part: Dict[str, Any]) -> Iterator[str]:
+            """Recursively yield all *base64-encoded* HTML part-data from a message."""
+            if 'parts' in part:  # If this part has sub-parts, recurse
+                for sub_part in part['parts']:
+                    yield from find_html_parts(sub_part)
+            else:
+                # If this part is exactly text/html, yield its base64 data
+                if part.get('mimeType') == 'text/html':
+                    data = part.get('body', {}).get('data', '')
+                    if data:
+                        # Handle case where data might be a list
+                        if isinstance(data, list):
+                            # Join all non-empty elements into a single string
+                            data = ''.join(str(d) for d in data if d and str(d).strip())
+                        yield data
+        
+        # 1) Initialize a fallback raw_body (in case there's no HTML at all)
         raw_body = ''
-        if 'body' in payload and payload['body'].get('data'):
-            raw_body = base64.urlsafe_b64decode(payload['body']['data']).decode()
+        
+        # 2) If top-level has 'body' data (single-part), decode it
+        body_data = payload.get('body', {}).get('data')
+        if body_data:
+            try:
+                # Handle case where data might be a list
+                if isinstance(body_data, list):
+                    # Join all non-empty elements into a single string
+                    body_data = ''.join(str(d) for d in body_data if d and str(d).strip())
+                raw_body = base64.urlsafe_b64decode(body_data).decode('utf-8', errors='replace')
+            except Exception as e:
+                self.logger.error(f"Failed to decode top-level body: {str(e)}")
+                self.logger.error(f"Body data type: {type(body_data)}")
+                if isinstance(body_data, (str, bytes)):
+                    self.logger.error(f"Body data length: {len(body_data)}")
+                    self.logger.error(f"Body data sample: {str(body_data[:100])}")
+        
+        # 3) If it's multipart, we can also look for text/plain as a fallback
         elif 'parts' in payload:
             for part in payload['parts']:
-                if part['mimeType'] == 'text/plain':
-                    raw_body = base64.urlsafe_b64decode(part['body']['data']).decode()
-                    break
+                if part.get('mimeType') == 'text/plain' and part.get('body', {}).get('data'):
+                    try:
+                        part_data = part['body']['data']
+                        # Handle case where data might be a list
+                        if isinstance(part_data, list):
+                            # Join all non-empty elements into a single string
+                            part_data = ''.join(str(d) for d in part_data if d and str(d).strip())
+                        raw_body = base64.urlsafe_b64decode(part_data).decode('utf-8', errors='replace')
+                        break
+                    except Exception as e:
+                        self.logger.error(f"Failed to decode text/plain part: {str(e)}")
+                        self.logger.error(f"Part data type: {type(part_data)}")
+                        if isinstance(part_data, (str, bytes)):
+                            self.logger.error(f"Part data length: {len(part_data)}")
+                            self.logger.error(f"Part data sample: {str(part_data[:100])}")
+                        continue
         
-        # Sanitize the body before returning
+        # 4) Now gather all text/html parts, recursively
+        html_parts = list(find_html_parts(payload))
+
+        if html_parts:
+            # Decode each HTML part and concatenate them
+            decoded_all_html = []
+            for encoded_html in html_parts:
+                try:
+                    # Handle case where data might be a list
+                    if isinstance(encoded_html, list):
+                        # Join all non-empty elements into a single string
+                        encoded_html = ''.join(str(d) for d in encoded_html if d and str(d).strip())
+                    decoded_html = base64.urlsafe_b64decode(encoded_html).decode('utf-8', errors='replace')
+                    decoded_all_html.append(decoded_html)
+                except Exception as e:
+                    self.logger.error(f"Failed to decode HTML part: {str(e)}")
+                    self.logger.error(f"HTML part type: {type(encoded_html)}")
+                    if isinstance(encoded_html, (str, bytes)):
+                        self.logger.error(f"HTML part length: {len(encoded_html)}")
+                        self.logger.error(f"HTML part sample: {str(encoded_html[:100])}")
+                    continue
+            
+            # Combine them with a separator (e.g. two line breaks)
+            if decoded_all_html:
+                raw_body = "\n\n".join(decoded_all_html)
+
+        # 5) Sanitize the combined raw_body however you like
         sanitized_body = self._sanitize_body(raw_body)
-        return sanitized_body
+
+        return (sanitized_body, raw_body)
+
     
     def _get_message_body_old(self, payload: Dict[str, Any]) -> str:
         """Extract message body from Gmail API payload"""
@@ -427,8 +524,8 @@ class TransactionParser:
         self.__gmail_id__ = ''  # Reset Gmail API ID
         self.logger.debug("Reset transaction fields") 
     
-    def _find_matching_template(self, headers: List[Dict[str, str]], body: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-        """Find a matching template for the message"""
+    def _find_matching_template(self, headers: List[Dict[str, str]], body: str, raw_body: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """Find a matching template for the message by checking both raw and sanitized body"""
         # Convert headers to dict for easier access
         header_dict = {h['name']: h['value'] for h in headers}
         subject = header_dict.get('Subject', '')
@@ -459,83 +556,111 @@ class TransactionParser:
                     else:
                         self.logger.info(f"✓ Subject pattern matches")
                 
-                # Create matches dictionary with all necessary data
-                matches = {
-                    'subject': subject,
-                    'from': from_addr,
-                    'headers': headers,
-                    'body': body  # Add the body to the matches dictionary
-                }
-                
-                # For templates with iterate_results=True, handle differently
-                if template.get('iterate_results', False):
-                    cells = re.findall(template['account'], body, re.IGNORECASE | re.DOTALL)
-                    if cells:
-                        matches['cells'] = cells
-                        return template_name, matches
-                
-                # For non-iterate templates, check if we have matches
-                has_matches = False
-                matches_found = {}
-                
-                # Try amount pattern
-                if template.get('amount'):
-                    amount_matches = list(re.finditer(template['amount'], body, re.IGNORECASE | re.DOTALL))
-                    if amount_matches:
-                        has_matches = True
-                        matches_found['amount'] = amount_matches[0].group(1) if amount_matches[0].groups() else amount_matches[0].group(0)
-                        self.logger.info(f"✓ Amount found: {matches_found['amount']}")
-                    else:
-                        self.logger.info(f"❌ Amount not found - Pattern: {template['amount']}")
-                
-                # Try vendor pattern
-                if template.get('vendor'):
-                    if isinstance(template['vendor'], str):
-                        if template['vendor'].startswith('(?') or template['vendor'].startswith('(.*?)'):
-                            # It's a regex pattern
-                            vendor_matches = list(re.finditer(template['vendor'], body, re.IGNORECASE | re.DOTALL))
-                            if vendor_matches:
-                                has_matches = True
-                                # Try each group until we find a non-empty one
-                                groups = vendor_matches[0].groups()
-                                vendor = next((g for g in groups if g and g.strip()), None)
-                                if vendor:
-                                    matches_found['vendor'] = vendor.strip()
-                                    self.logger.info(f"✓ Vendor found: {matches_found['vendor']}")
-                            else:
-                                self.logger.info(f"❌ Vendor not found - Pattern: {template['vendor']}")
-                        else:
-                            # It's a fixed string
+                # Try matching against both raw and sanitized body
+                for body_type, current_body in [('sanitized', body),('raw', raw_body)]:
+                    self.logger.info(f"\nTrying {body_type} body:")
+                    
+                    # Create matches dictionary with all necessary data
+                    matches = {
+                        'subject': subject,
+                        'from': from_addr,
+                        'headers': headers,
+                        'body': current_body,
+                        'body_type': body_type,
+                        'raw_body': raw_body,
+                        'sanitized_body': body
+                    }
+                    
+                    # For templates with iterate_results=True, handle differently
+                    if template.get('iterate_results', False):
+                        cells = re.findall(template['account'], current_body, re.IGNORECASE | re.DOTALL)
+                        if cells:
+                            matches['cells'] = cells
+                            self.logger.info(f"✓ Found matching cells in {body_type} body")
+                            return template_name, matches
+                    
+                    # For non-iterate templates, check if we have matches
+                    has_matches = False
+                    matches_found = {}
+                    
+                    # Try amount pattern
+                    if template.get('amount'):
+                        amount_matches = list(re.finditer(template['amount'], current_body, re.IGNORECASE | re.DOTALL))
+                        if amount_matches:
                             has_matches = True
-                            matches_found['vendor'] = template['vendor']
-                            self.logger.info(f"✓ Vendor (fixed): {matches_found['vendor']}")
-                
-                # Try account pattern
-                if template.get('account'):
-                    account_matches = list(re.finditer(template['account'], body, re.IGNORECASE | re.DOTALL))
-                    if account_matches:
-                        has_matches = True
-                        matches_found['account'] = account_matches[0].group(1) if account_matches[0].groups() else account_matches[0].group(0)
-                        self.logger.info(f"✓ Account found: {matches_found['account']}")
+                            matches_found['amount'] = amount_matches[0].group(1) if amount_matches[0].groups() else amount_matches[0].group(0)
+                            self.logger.info(f"✓ Amount found in {body_type} body: {matches_found['amount']}")
+                        else:
+                            self.logger.info(f"❌ Amount not found in {body_type} body - Pattern: {template['amount']}")
+                    
+                    # Try vendor pattern
+                    if template.get('vendor'):
+                        if isinstance(template['vendor'], str):
+                            if template['vendor'].startswith('(?') or template['vendor'].startswith('(.*?)'):
+                                # It's a regex pattern
+                                vendor_matches = list(re.finditer(template['vendor'], current_body, re.IGNORECASE | re.DOTALL))
+                                if vendor_matches:
+                                    has_matches = True
+                                    # Try each group until we find a non-empty one
+                                    groups = vendor_matches[0].groups()
+                                    vendor = next((g for g in groups if g and g.strip()), None)
+                                    if vendor:
+                                        matches_found['vendor'] = vendor.strip()
+                                        self.logger.info(f"✓ Vendor found in {body_type} body: {matches_found['vendor']}")
+                                else:
+                                    self.logger.info(f"❌ Vendor not found in {body_type} body - Pattern: {template['vendor']}")
+                            elif template['vendor'].startswith('Merchant'):
+                                # Special handling for Merchant pattern
+                                vendor_matches = list(re.finditer(template['vendor'], current_body, re.IGNORECASE | re.DOTALL))
+                                if vendor_matches:
+                                    has_matches = True
+                                    # Get the first group if it exists, otherwise get the full match
+                                    vendor = vendor_matches[0].group(1) if vendor_matches[0].groups() else vendor_matches[0].group(0)
+                                    if vendor:
+                                        matches_found['vendor'] = vendor.strip()
+                                        self.logger.info(f"✓ Vendor found in {body_type} body: {matches_found['vendor']}")
+                                        self.logger.debug(f"Full vendor match: {vendor_matches[0].group(0)}")
+                                else:
+                                    self.logger.info(f"❌ Vendor not found in {body_type} body - Pattern: {template['vendor']}")
+                            else:
+                                # It's a fixed string
+                                has_matches = True
+                                matches_found['vendor'] = template['vendor']
+                                self.logger.info(f"✓ Vendor (fixed) in {body_type} body: {matches_found['vendor']}")
+                    
+                    # Try account pattern
+                    if template.get('account'):
+                        account_matches = list(re.finditer(template['account'], current_body, re.IGNORECASE | re.DOTALL))
+                        if account_matches:
+                            has_matches = True
+                            matches_found['account'] = account_matches[0].group(1) if account_matches[0].groups() else account_matches[0].group(0)
+                            self.logger.info(f"✓ Account found in {body_type} body: {matches_found['account']}")
+                        else:
+                            self.logger.info(f"❌ Account not found in {body_type} body - Pattern: {template['account']}")
+                    
+                    # Try date pattern
+                    if template.get('date'):
+                        date_matches = list(re.finditer(template['date'], current_body, re.IGNORECASE | re.DOTALL))
+                        if date_matches:
+                            matches_found['date'] = date_matches[0].group(1) if date_matches[0].groups() else date_matches[0].group(0)
+                            self.logger.info(f"✓ Date found in {body_type} body: {matches_found['date']}")
+                        else:
+                            self.logger.info(f"❌ Date not found in {body_type} body - Pattern: {template['date']}")
+                    
+                    # Check if we have the minimum required fields
+                    if 'amount' in matches_found and 'account' in matches_found and 'vendor' in matches_found:
+                        self.logger.info(f"\n✓ Found matching template: {template_name} in {body_type} body")
+                        matches['found'] = matches_found  # Add the found matches to the matches dictionary
+                        return template_name, matches
                     else:
-                        self.logger.info(f"❌ Account not found - Pattern: {template['account']}")
-                
-                # Try date pattern
-                if template.get('date'):
-                    date_matches = list(re.finditer(template['date'], body, re.IGNORECASE | re.DOTALL))
-                    if date_matches:
-                        matches_found['date'] = date_matches[0].group(1) if date_matches[0].groups() else date_matches[0].group(0)
-                        self.logger.info(f"✓ Date found: {matches_found['date']}")
-                    else:
-                        self.logger.info(f"❌ Date not found - Pattern: {template['date']}")
-                
-                # Check if we have the minimum required fields
-                if 'amount' in matches_found and ('account' in matches_found or 'vendor' in matches_found):
-                    self.logger.info(f"\n✓ Found matching template: {template_name}")
-                    matches['found'] = matches_found  # Add the found matches to the matches dictionary
-                    return template_name, matches
-                else:
-                    self.logger.info("❌ Missing required fields")
+                        missing = []
+                        if 'amount' not in matches_found:
+                            missing.append('amount')
+                        if 'account' not in matches_found:
+                            missing.append('account')
+                        if 'vendor' not in matches_found:
+                            missing.append('vendor')
+                        self.logger.info(f"❌ Missing required fields in {body_type} body: {', '.join(missing)}")
             
             except Exception as e:
                 self.logger.error(f"\n❌ Error processing template {template_name}: {str(e)}")
@@ -543,7 +668,7 @@ class TransactionParser:
                 self.logger.error(traceback.format_exc())
                 continue
         
-        self.logger.info("\n❌ No matching template found")
+        self.logger.info("\n❌ No matching template found in either raw or sanitized body")
         return None, None
     
     def _extract_transaction_data(self, template_name: str, matches: Dict[str, Any]) -> Optional[Dict[str, Any]]:

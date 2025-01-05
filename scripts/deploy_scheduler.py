@@ -34,19 +34,23 @@ class SchedulerDeployer:
         # Get scheduler config
         self.scheduler_config = self.config.get('scheduler')
         if not self.scheduler_config:
-            self.logger.warning("No scheduler configuration found, using default values")
-            self.schedule = '*/10 * * * *'  # Every 10 minutes
-            self.timezone = 'UTC'
-            self.retry_count = 3
-            self.retry_interval = 300
-            self.timeout = 540
-        else:
-            transaction_sync = self.scheduler_config.get('transaction_sync', {})
-            self.schedule = transaction_sync.get('schedule', '*/10 * * * *')
-            self.timezone = transaction_sync.get('timezone', 'UTC')
-            self.retry_count = transaction_sync.get('retry_count', 3)
-            self.retry_interval = transaction_sync.get('retry_interval', 300)
-            self.timeout = transaction_sync.get('timeout', 540)
+            self.logger.warning("No scheduler configuration found, using default values from config")
+            self.scheduler_config = self.config.get('defaults', 'scheduler', {
+                'transaction_sync': {
+                    'schedule': '*/10 * * * *',  # Every 10 minutes
+                    'timezone': 'UTC',
+                    'retry_count': 3,
+                    'retry_interval': 300,
+                    'timeout': 540
+                }
+            })
+        
+        transaction_sync = self.scheduler_config.get('transaction_sync', {})
+        self.schedule = transaction_sync.get('schedule', '*/10 * * * *')
+        self.timezone = transaction_sync.get('timezone', 'UTC')
+        self.retry_count = transaction_sync.get('retry_count', 3)
+        self.retry_interval = transaction_sync.get('retry_interval', 300)
+        self.timeout = transaction_sync.get('timeout', 540)
         
         # Hash file for tracking changes
         self.hash_file = '.scheduler_hashes.json'

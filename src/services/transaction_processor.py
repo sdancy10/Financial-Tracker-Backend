@@ -7,8 +7,9 @@ import base64
 import os
 
 # Set up logging with more detailed format
+log_level = os.getenv('LOG_LEVEL', 'INFO')
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, log_level),
     format='[%(asctime)s] %(levelname)s: %(message)s'
 )
 logger = logging.getLogger(__name__)

@@ -48,3 +48,7 @@ terraform.rc
 auth_output.tmp
 config_output.tmp
 *.tmp 
+
+# Mock data files (generated)
+src/mock/api/mock_messages.py
+src/mock/api/mock_messages_failures.py 

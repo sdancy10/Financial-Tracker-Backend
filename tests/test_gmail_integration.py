@@ -12,6 +12,11 @@ from src.utils.gmail_util import GmailUtil
 from src.utils.credentials_manager import CredentialsManager
 from src.utils.config import Config
 from src.utils.test_utils import get_test_users
+from src.mock.api.mock_gmail_synthetic_api import (
+    create_mock_message, 
+    INTEGRATION_TEST_MESSAGES,
+    get_mock_gmail_service
+)
 
 class TestGmailIntegration(unittest.TestCase):
     """Test Gmail integration functionality"""
@@ -33,6 +38,15 @@ class TestGmailIntegration(unittest.TestCase):
         # Initialize credentials manager with real credentials
         self.creds_manager = CredentialsManager(self.project_id, self.config)
         
+        # Get service account credentials from the credentials manager
+        self.service_account_creds = self.creds_manager.service_account_credentials
+
+        # Initialize real Firestore client with service account credentials
+        self.real_db = firestore.Client(
+            project=self.project_id,
+            credentials=self.service_account_creds
+        )
+        
         # Get real credentials for test users
         try:
             test_users = get_test_users(self.config)
@@ -50,9 +64,6 @@ class TestGmailIntegration(unittest.TestCase):
         except Exception as e:
             self.logger.error(f"Failed to load real credentials: {str(e)}")
             raise
-        
-        # Initialize real Firestore client
-        self.real_db = firestore.Client(project=self.project_id)
         
         # Initialize Gmail clients with real credentials but mock the service
         with patch('src.utils.gmail_util.build') as mock_build:
@@ -140,13 +151,15 @@ class TestGmailIntegration(unittest.TestCase):
     @patch('src.utils.transaction_dao.firestore')
     @patch('src.utils.gmail_util.build')
     @patch('src.services.transaction_service.TransactionValidator')
-    def test_end_to_end_transaction_processing(self, mock_validator, mock_build, mock_firestore):
+    @patch('src.services.transaction_service.firestore')
+    def test_end_to_end_transaction_processing(self, mock_firestore_service, mock_validator, mock_build, mock_firestore_dao):
         """Test end-to-end transaction processing for a test user"""
         self.logger.info("Starting end-to-end transaction processing test")
         
-        # Mock Firestore client
+        # Mock Firestore client for both service and DAO
         mock_db = Mock()
-        mock_firestore.Client.return_value = mock_db
+        mock_firestore_service.Client.return_value = mock_db
+        mock_firestore_dao.Client.return_value = mock_db
         
         # Mock batch operations
         mock_batch = Mock()
@@ -191,30 +204,22 @@ class TestGmailIntegration(unittest.TestCase):
         
         # Create mock messages with the Transactions label
         mock_messages = [
-            {
-                'id': 'test_message_1',
-                'labelIds': ['UNREAD', 'Transactions'],
-                'payload': {
-                    'headers': [
-                        {'name': 'Subject', 'value': 'Your $100.00 transaction with TEST VENDOR'},
-                        {'name': 'From', 'value': 'no.reply.alerts@chase.com'},
-                        {'name': 'Message-ID', 'value': '<test_message_1@chase.com>'}
-                    ],
-                    'body': {
-                        'data': base64.b64encode(b'''
-                            <html>
-                            <body>
-                            <table>
-                            <tr><td>You made a $100.00 transaction with TEST VENDOR</td></tr>
-                            <tr><td>Account ending in (...1234)</td></tr>
-                            <tr><td>1:49:50 PM ET</td></tr>
-                            </table>
-                            </body>
-                            </html>
-                        '''.strip()).decode()
-                    }
-                }
-            }
+            create_mock_message(
+                subject="Chase Direct Deposit",
+                body='''
+                    <html>
+                    <body>
+                    <table>
+                    <tr><td>You have a direct deposit of $1000.00</td></tr>
+                    <tr><td>Account ending in (...5678)</td></tr>
+                    <tr><td>2:49:50 PM ET</td></tr>
+                    </table>
+                    </body>
+                    </html>
+                '''.strip(),
+                from_addr="no.reply.alerts@chase.com",
+                date="2024-01-01T14:49:50-05:00"
+            )
         ]
         
         # Mock list messages
@@ -295,11 +300,13 @@ class TestGmailIntegration(unittest.TestCase):
     @patch('src.utils.transaction_dao.firestore')
     @patch('src.utils.gmail_util.build')
     @patch('src.services.transaction_service.TransactionValidator')
-    def test_mock_transaction_processing(self, mock_validator, mock_build, mock_firestore):
+    @patch('src.services.transaction_service.firestore')
+    def test_mock_transaction_processing(self, mock_firestore_service, mock_validator, mock_build, mock_firestore_dao):
         """Test transaction processing with mocked dependencies"""
-        # Mock Firestore client
+        # Mock Firestore client for both service and DAO
         mock_db = Mock()
-        mock_firestore.Client.return_value = mock_db
+        mock_firestore_service.Client.return_value = mock_db
+        mock_firestore_dao.Client.return_value = mock_db
         
         # Mock batch operations
         mock_batch = Mock()
@@ -338,90 +345,27 @@ class TestGmailIntegration(unittest.TestCase):
         
         mock_db.collection = mock_collection
         
-        # Mock Gmail API with real transaction examples
-        mock_service = MagicMock()
-        mock_messages = []
-        mock_emails = {}
+        # Use mock service with predefined test data
+        mock_build.return_value = get_mock_gmail_service()
+
+        # Mock Gmail client with predefined responses
+        mock_gmail_client = MagicMock()
+        mock_gmail_client.service = mock_build.return_value
         
-        # Create mock messages with the Transactions label
-        mock_messages = [
+        # Use predefined test data for transaction responses
+        test_message = INTEGRATION_TEST_MESSAGES['chase_direct_deposit_1']
+        mock_gmail_client.fetch_transaction_emails.return_value = [(
             {
-                'id': 'test_message_2',
-                'labelIds': ['UNREAD', 'Transactions'],
-            'payload': {
-                'headers': [
-                        {'name': 'Subject', 'value': 'Chase Direct Deposit'},
-                        {'name': 'From', 'value': 'no.reply.alerts@chase.com'},
-                        {'name': 'Message-ID', 'value': '<test_message_2@chase.com>'}
-                    ],
-                    'body': {
-                        'data': base64.b64encode(b'''
-                            <html>
-                            <body>
-                            <table>
-                            <tr><td>You have a direct deposit of $1000.00</td></tr>
-                            <tr><td>Account ending in (...5678)</td></tr>
-                            <tr><td>2:49:50 PM ET</td></tr>
-                            </table>
-                            </body>
-                            </html>
-                        '''.strip()).decode()
-                    }
-                }
-            }
-        ]
-        
-        # Mock list messages
-        mock_list = MagicMock()
-        mock_list.execute.return_value = {'messages': mock_messages}
-        mock_messages_api = MagicMock()
-        mock_messages_api.list.return_value = mock_list
-        
-        # Mock get message
-        def mock_get_message(*args, **kwargs):
-            mock_get = MagicMock()
-            if 'id' in kwargs and kwargs['id'] == 'test_message_2':
-                mock_get.execute.return_value = mock_messages[0]
-            else:
-                mock_get.execute.return_value = None
-            return mock_get
-        
-        mock_messages_api.get = mock_get_message
-        
-        # Mock users API
-        mock_users = MagicMock()
-        mock_users.messages.return_value = mock_messages_api
-        mock_service.users.return_value = mock_users
-        
-        mock_build.return_value = mock_service
+                **test_message['parsed_data'],
+                'user_id': user2['user_id'],
+                'account_id': 'test_account_2'
+            },
+            test_message['parsed_data']['id_api']
+        )]
         
         # Mock transaction validator
         mock_validator_instance = mock_validator.return_value
         mock_validator_instance.validate_transaction.return_value = (True, None)
-        
-        # Mock Gmail client initialization
-        mock_gmail_client = MagicMock()
-        mock_gmail_client.service = mock_service
-        mock_gmail_client.fetch_transaction_emails.return_value = [(
-            {
-                'id': '<test_message_2@chase.com>',
-                'id_api': 'test_message_2',
-                'template_used': 'Chase Direct Deposit',
-                'amount': 1000.00,
-                'vendor': 'Direct Deposit',
-                'account': '5678',
-                'date': '2024-01-01T00:00:00Z',
-                'user_id': user2['user_id'],
-                'account_id': 'test_account_2',
-                'status': 'pending',
-                'description': 'Direct deposit',
-                'predicted_category': 'Income',
-                'predicted_subcategory': 'Salary',
-                'vendor_cleaned': 'DIRECT DEPOSIT',
-                'cleaned_metaphone': 'DRKT DPST'
-            },
-            'test_message_2'
-        )]
         
         # Mock CredentialsManager
         mock_creds_manager = MagicMock()

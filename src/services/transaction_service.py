@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 from google.cloud import firestore
 import os
+import base64
 
 class TransactionService:
     """Service for handling transaction processing operations"""
@@ -42,39 +43,19 @@ class TransactionService:
     def setup_first_run(self) -> None:
         """Set up initial sync settings for default users"""
         try:
+            self.logger.info("Starting first run setup...")
             batch = self.db.batch()
             now = datetime.utcnow()
             
-            # Default user credentials
-            default_credentials = {
-                'aDer8RS94NPmPdAYGHQQpI3iWm13': {
-                    'email': 'clairejablonski@gmail.com',
-                    'username': 'clairejablonski@gmail.com',
-                    'password': 'your_app_specific_password',  # Replace with actual app-specific password
-                    'client_id': os.environ.get('GMAIL_CLIENT_ID'),
-                    'client_secret': os.environ.get('GMAIL_CLIENT_SECRET'),
-                    'refresh_token': os.environ.get('GMAIL_REFRESH_TOKEN'),
-                    'token_uri': 'https://oauth2.googleapis.com/token',
-                    'scopes': ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify']
-                },
-                '5oZfUgtSn0g1VaEa6VNpHVC51Zq2': {
-                    'email': 'sdancy.10@gmail.com',
-                    'username': 'sdancy.10@gmail.com',
-                    'password': 'your_app_specific_password',  # Replace with actual app-specific password
-                    'client_id': os.environ.get('GMAIL_CLIENT_ID'),
-                    'client_secret': os.environ.get('GMAIL_CLIENT_SECRET'),
-                    'refresh_token': os.environ.get('GMAIL_REFRESH_TOKEN'),
-                    'token_uri': 'https://oauth2.googleapis.com/token',
-                    'scopes': ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify']
-                }
-            }
-            
             for user_id in self.DEFAULT_SYNC_USERS:
+                self.logger.info(f"Setting up default user: {user_id}")
                 user_ref = self.db.collection('users').document(user_id)
                 user_doc = user_ref.get()
                 
                 if user_doc.exists:
+                    self.logger.info(f"Found user document for {user_id}")
                     user_data = user_doc.to_dict()
+                    self.logger.info(f"Current user data: {user_data}")
                     sync_settings = {
                         'email_sync_enabled': True,
                         'last_sync': None,
@@ -88,26 +69,32 @@ class TransactionService:
                     }
                     
                     # Update user document
+                    self.logger.info(f"Updating user {user_id} with sync settings: {sync_settings}")
                     batch.update(user_ref, sync_settings)
                     self.logger.info(f"Enabled email sync for default user {user_id}")
                     
-                    # Store Gmail credentials in Secret Manager
-                    if user_id in default_credentials:
-                        creds = default_credentials[user_id]
-                        self.cred_manager.store_user_gmail_credentials(
-                            user_id=user_id,
-                            email=creds['email'],
-                            username=creds['username'],
-                            password=creds['password'],
-                            refresh_token=creds.get('refresh_token', '')  # Add refresh token
-                        )
-                        self.logger.info(f"Stored Gmail credentials for user {user_id}")
+                    # Get email from user data
+                    email = user_data.get('contactInformation', {}).get('_email')
+                    if email:
+                        try:
+                            # Let the credentials manager handle all credential operations
+                            self.cred_manager.setup_default_user_credentials(user_id, email)
+                            self.logger.info(f"Set up credentials for user {user_id}")
+                        except Exception as e:
+                            self.logger.error(f"Error setting up credentials for user {user_id}: {str(e)}")
+                        self.logger.info(f"Added batch update for user {user_id}")
+                    else:
+                        self.logger.warning(f"Default user {user_id} document not found in Firestore")
+            
+            self.logger.info("Committing batch updates...")
             
             batch.commit()
-            self.logger.info("Completed first run setup")
+            self.logger.info("Successfully completed first run setup")
             
         except Exception as e:
             self.logger.error(f"Error in first run setup: {str(e)}")
+            self.logger.error(f"Full error details: {repr(e)}")
+            raise
     
     def get_user_credentials(self) -> List[Dict[str, Any]]:
         """Get all user credentials from Secret Manager for users in Firebase"""
@@ -115,17 +102,28 @@ class TransactionService:
         
         try:
             # Check if first run setup is needed
-            first_run = True
+            first_run = False
+            self.logger.info("Checking for first run setup...")
             for user_id in self.DEFAULT_SYNC_USERS:
+                self.logger.info(f"Checking default user: {user_id}")
                 user_ref = self.db.collection('users').document(user_id)
                 user_doc = user_ref.get()
-                if user_doc.exists and user_doc.to_dict().get('email_sync_enabled') is not None:
-                    first_run = False
-                    break
+                if user_doc.exists:
+                    self.logger.info(f"Found user document for {user_id}")
+                    user_data = user_doc.to_dict()
+                    self.logger.info(f"User data: email_sync_enabled={user_data.get('email_sync_enabled')}, has_contact_info={bool(user_data.get('contactInformation'))}")
+                    # If any default user doesn't have email_sync_enabled set, we need to run first run setup
+                    if user_data.get('email_sync_enabled') is None:
+                        first_run = True
+                        self.logger.info(f"User {user_id} needs sync setup")
+                else:
+                    self.logger.warning(f"Default user {user_id} document not found")
             
             if first_run:
                 self.logger.info("First run detected, setting up default users")
                 self.setup_first_run()
+            else:
+                self.logger.info("All default users have sync settings, skipping first run setup")
             
             # Get all users from Firebase
             users_ref = self.db.collection('users')
@@ -135,9 +133,12 @@ class TransactionService:
             batch_size = self.config.get('data', 'user_batch_size') or 10
             user_batch = []
             
+            self.logger.info("Starting to process users...")
             for user in users:
                 user_data = user.to_dict()
                 user_id = user.id
+                self.logger.info(f"Processing user {user_id}")
+                self.logger.info(f"User data: email_sync_enabled={user_data.get('email_sync_enabled')}, has_contact_info={bool(user_data.get('contactInformation'))}")
                 
                 # Check if user has email sync enabled
                 if not user_data.get('email_sync_enabled', False):
@@ -150,10 +151,22 @@ class TransactionService:
                     self.logger.warning(f"No email found for user {user_id}")
                     continue
                 
+                self.logger.info(f"Found user {user_id} with email {email}, attempting to get credentials")
                 # Get user's Gmail credentials from Secret Manager
                 try:
+                    # Log the expected secret ID format
+                    encoded_email = base64.urlsafe_b64encode(email.encode()).decode().replace('-', '_').replace('=', '')
+                    expected_secret = f"gmail-credentials-{user_id.lower()}-{encoded_email}"
+                    self.logger.info(f"Attempting to access secret: {expected_secret}")
+                    
                     creds = self.cred_manager.get_user_gmail_credentials(user_id, email)
                     if creds:
+                        self.logger.debug(f"Successfully retrieved credentials for {email}")
+                        self.logger.debug(f"Credential fields present: {list(creds.keys())}")
+                        self.logger.debug(f"Using client_id: {creds.get('client_id', 'NOT_FOUND')}")
+                        self.logger.debug(f"Using token_uri: {creds.get('token_uri', 'NOT_FOUND')}")
+                        self.logger.debug(f"Refresh token present: {bool(creds.get('refresh_token'))}")
+                        self.logger.debug(f"Scopes: {creds.get('scopes', [])}")
                         user_creds.append({
                             'user_id': user_id,
                             'email': email,
@@ -175,15 +188,18 @@ class TransactionService:
                             user_batch = []
                 except Exception as e:
                     self.logger.error(f"Error retrieving credentials for user {user_id}: {str(e)}")
+                    self.logger.debug(f"Full error details: {repr(e)}")
                     continue
             
             # Update last sync time for remaining users
             if user_batch:
                 self._update_last_sync(user_batch)
             
+            self.logger.debug(f"Finished processing users. Found {len(user_creds)} users with valid credentials")
             return user_creds
         except Exception as e:
             self.logger.error(f"Error retrieving user credentials: {str(e)}")
+            self.logger.debug(f"Full error details: {repr(e)}")
             return user_creds
     
     def _update_last_sync(self, user_ids: List[str]) -> None:

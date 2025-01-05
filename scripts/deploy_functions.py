@@ -11,6 +11,7 @@ import base64
 import subprocess
 import venv
 from pathlib import Path
+from google.protobuf import duration_pb2
 
 # Add project root to Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -118,8 +119,8 @@ class FunctionDeployer:
         self.hash_file = '.function_hashes.json'
         self.deployment_hashes = self._load_deployment_hashes()
         
-        # Mapping of original module paths to flattened names
-        self.module_mapping = {
+        # Get module mapping from config or use defaults
+        self.module_mapping = self.function_config.get('module_mapping', {
             'src.utils.config': 'utils_config',
             'src.utils.transaction_dao': 'utils_transaction_dao',
             'src.utils.credentials_manager': 'utils_credentials_manager',
@@ -134,7 +135,7 @@ class FunctionDeployer:
             'src.services.transaction_trainer': 'services_transaction_trainer',
             'src.services.transaction_scheduler': 'services_transaction_scheduler',
             'src.api.routes': 'api_routes'
-        }
+        })
         
         # Add Terraform state checking
         self.terraform_state = self._load_terraform_state()
@@ -509,7 +510,8 @@ class FunctionDeployer:
                 return False
             
             # Convert timeout to duration format
-            timeout_duration = {'seconds': self.timeout}
+            timeout_duration = duration_pb2.Duration()
+            timeout_duration.seconds = self.timeout
             
             function = {
                 'name': f'{parent}/functions/{self.function_name}',
@@ -518,13 +520,14 @@ class FunctionDeployer:
                 'runtime': self.runtime,
                 'environment_variables': {
                     'GOOGLE_CLOUD_PROJECT': self.project_id,
-                    'CONFIG_PATH': 'config.yaml'
+                    'CONFIG_PATH': 'config.yaml',
                 },
                 'event_trigger': {
                     'event_type': 'google.pubsub.topic.publish',
                     'resource': topic_name,
                     'service': 'pubsub.googleapis.com'
                 },
+                'description': "Processes financial transactions",
                 'timeout': timeout_duration
             }
             
