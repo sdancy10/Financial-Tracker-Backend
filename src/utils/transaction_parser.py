@@ -648,8 +648,10 @@ class TransactionParser:
                         else:
                             self.logger.info(f"❌ Date not found in {body_type} body - Pattern: {template['date']}")
                     
-                    # Check if we have the minimum required fields
-                    if 'amount' in matches_found and 'account' in matches_found and 'vendor' in matches_found and 'date' in matches_found:
+                    # Check if the template has a date pattern defined
+                    date_required = 'date' in template and template['date'] != ''
+                    
+                    if 'amount' in matches_found and 'account' in matches_found and 'vendor' in matches_found and (not date_required or 'date' in matches_found):
                         self.logger.info(f"\n✓ Found matching template: {template_name} in {body_type} body")
                         matches['found'] = matches_found  # Add the found matches to the matches dictionary
                         return template_name, matches

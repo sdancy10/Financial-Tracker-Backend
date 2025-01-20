@@ -21,11 +21,13 @@ class TransactionDAO:
         cleaned = re.sub('[^A-Za-z ]+', ' ', vendor.lower())
         # Remove multiple spaces
         cleaned = re.sub(' +', ' ', cleaned).strip()
-        # Generate metaphone code
-        metaphone = doublemetaphone(cleaned)[0] if cleaned else None
+        # Generate both metaphone codes
+        primary, secondary = doublemetaphone(cleaned) if cleaned else (None, None)
+        # Create array of metaphone codes, filtering out None values
+        metaphone_codes = [code for code in [primary, secondary] if code]
         return {
             'vendor_cleaned': cleaned,
-            'cleaned_metaphone': metaphone
+            'cleaned_metaphone': metaphone_codes
         }
     
     def _get_date_components(self, dt: datetime) -> Dict[str, Any]:
