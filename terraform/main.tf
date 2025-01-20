@@ -25,11 +25,7 @@ resource "google_secret_manager_secret" "gmail_oauth" {
   )
 
   replication {
-    user_managed {
-      replicas {
-        location = local.region
-      }
-    }
+    auto {}
   }
 
   depends_on = [
@@ -103,13 +99,12 @@ resource "google_cloudfunctions_function" "transaction_processor" {
     resource   = google_pubsub_topic.transaction_topic[0].name
   }
 
-  environment_variables = merge(
-    local.processed_env_vars,
-    {
-      PROJECT_ID = local.project_id
-      REGION     = local.region
-    }
-  )
+  environment_variables = {
+    "CONFIG_PATH"          = "config.yaml"
+    "GOOGLE_CLOUD_PROJECT" = local.project_id
+    "PROJECT_ID"           = local.project_id
+    "REGION"               = local.region
+  }
 
   depends_on = [
     google_project_service.required_apis
@@ -209,11 +204,7 @@ resource "google_secret_manager_secret" "default_credentials" {
   secret_id = local.config_raw.data.credentials.default_secret
 
   replication {
-    user_managed {
-      replicas {
-        location = local.region
-      }
-    }
+    auto {}
   }
 
   depends_on = [
@@ -227,11 +218,7 @@ resource "google_secret_manager_secret" "firebase_credentials" {
   secret_id = local.config_raw.data.credentials.firebase_secret
 
   replication {
-    user_managed {
-      replicas {
-        location = local.region
-      }
-    }
+    auto {}
   }
 
   depends_on = [
@@ -294,11 +281,7 @@ resource "google_secret_manager_secret" "cloud_build_sa_key" {
   secret_id = local.cloud_build.secrets.service_account_key
 
   replication {
-    user_managed {
-      replicas {
-        location = local.region
-      }
-    }
+    auto {}
   }
 
   depends_on = [

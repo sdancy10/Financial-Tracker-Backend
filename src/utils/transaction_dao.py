@@ -15,13 +15,18 @@ class TransactionDAO:
         self.batch_size = 500  # Firestore batch limit
         self.logger = logging.getLogger(__name__)
     
-    def _clean_vendor(self, vendor: str) -> str:
-        """Clean vendor name by removing special characters and converting to lowercase"""
+    def _clean_vendor(self, vendor: str) -> Dict[str, str]:
+        """Clean vendor name and generate metaphone code"""
         # Remove special characters and convert to lowercase
         cleaned = re.sub('[^A-Za-z ]+', ' ', vendor.lower())
         # Remove multiple spaces
         cleaned = re.sub(' +', ' ', cleaned).strip()
-        return cleaned
+        # Generate metaphone code
+        metaphone = doublemetaphone(cleaned)[0] if cleaned else None
+        return {
+            'vendor_cleaned': cleaned,
+            'cleaned_metaphone': metaphone
+        }
     
     def _get_date_components(self, dt: datetime) -> Dict[str, Any]:
         """Extract date components from datetime object"""
@@ -35,7 +40,7 @@ class TransactionDAO:
     def store_transactions_batch(self, transactions: List[Dict[str, Any]], user_id: str) -> bool:
         """Store multiple transactions in batches"""
         try:
-            # Process in batches of 500 (Firestore limit)
+            # Process in batches of 500 (Firestore batch limit)
             for i in range(0, len(transactions), self.batch_size):
                 batch = self.db.batch()
                 batch_transactions = transactions[i:i + self.batch_size]
@@ -49,6 +54,17 @@ class TransactionDAO:
                         self.logger.error(f"Skipping transaction {transaction.get('id', 'unknown')}: Missing required fields: {missing_fields}")
                         continue
                     
+                    # Clean vendor and generate metaphone if vendor is present
+                    if transaction.get('vendor'):
+                        vendor_data = self._clean_vendor(transaction['vendor'])
+                        transaction.update(vendor_data)
+                    
+                    # Handle category to predicted_category conversion
+                    if 'category' in transaction and 'predicted_category' not in transaction:
+                        transaction['predicted_category'] = transaction.pop('category')
+                    elif 'predicted_category' not in transaction:
+                        transaction['predicted_category'] = 'Uncategorized'
+                    
                     # Ensure we have at least one valid ID
                     if not transaction.get('id') and not transaction.get('id_api'):
                         self.logger.error(f"Skipping transaction: No valid ID found (neither Message-ID nor Gmail API ID)")
@@ -61,20 +77,14 @@ class TransactionDAO:
                     doc_ref = self.db.collection('users').document(user_id)\
                                 .collection('transactions').document(doc_id)
                     
-                    # Add metadata
+                    # Prepare transaction data
                     transaction_data = transaction.copy()
+                    transaction_data['id'] = doc_id
                     
-                    # Clean and process vendor name
-                    if 'vendor' in transaction_data:
-                        vendor = transaction_data['vendor']
-                        transaction_data['vendor'] = vendor.lower()  # Store original vendor in lowercase
-                        transaction_data['vendor_cleaned'] = self._clean_vendor(vendor)
-                        transaction_data['cleaned_metaphone'] = list(doublemetaphone(transaction_data['vendor_cleaned']))
-                    
-                    # Convert date to UTC Firestore Timestamp and extract components
+                    # Handle date field
                     if isinstance(transaction_data.get('date'), str):
                         try:
-                            # Parse ISO format date string and convert to UTC
+                            # Parse ISO format string to datetime
                             dt = datetime.fromisoformat(transaction_data['date'].replace('Z', '+00:00'))
                             # Convert to UTC if it has timezone info
                             if dt.tzinfo is not None:
@@ -85,9 +95,8 @@ class TransactionDAO:
                             # Add date components
                             if timestamp != firestore.SERVER_TIMESTAMP:
                                 transaction_data.update(self._get_date_components(dt))
-                        except ValueError as e:
-                            # If date parsing fails, use server timestamp
-                            self.logger.warning(f"Failed to parse date {transaction_data.get('date')}: {str(e)}")
+                        except (ValueError, TypeError) as e:
+                            self.logger.warning(f"Error parsing date string: {str(e)}")
                             transaction_data['date'] = firestore.SERVER_TIMESTAMP
                     elif isinstance(transaction_data.get('date'), datetime):
                         # Convert to UTC if it has timezone info
@@ -108,38 +117,81 @@ class TransactionDAO:
                     # Check if document already exists
                     existing_doc = doc_ref.get()
                     
-                    # Add metadata
-                    metadata = {
-                        'updated_at': firestore.SERVER_TIMESTAMP,
-                        'status': 'processed',
-                        'predicted_category': 'Uncategorized',
-                        'predicted_subcategory': None
-                    }
-                    if not existing_doc.exists:
-                        metadata['created_at'] = firestore.SERVER_TIMESTAMP
-                    else:
-                        # Preserve the original created_at value for existing documents
+                    if existing_doc.exists:
+                        # Get existing data
                         existing_data = existing_doc.to_dict()
-                        if existing_data and 'created_at' in existing_data and existing_data['created_at']:
-                            metadata['created_at'] = existing_data['created_at']
-                        else:
-                            # If no created_at exists or it's null, set a new one
-                            metadata['created_at'] = firestore.SERVER_TIMESTAMP
-                            self.logger.info(f"Adding missing created_at for existing transaction: {transaction.get('id')}")
-                    
-                    transaction_data.update(metadata)
+                        
+                        # Prepare updates with only the fields we explicitly handle
+                        updates = {
+                            # Required fields
+                            'id': transaction_data.get('id'),
+                            'id_api': transaction_data.get('id_api'),
+                            'amount': transaction_data.get('amount'),
+                            'vendor': transaction_data.get('vendor'),
+                            'vendor_cleaned': transaction_data.get('vendor_cleaned'),
+                            'account': transaction_data.get('account'),
+                            'template_used': transaction_data.get('template_used'),
+                            'cleaned_metaphone': transaction_data.get('cleaned_metaphone'),
+                            
+                            # Date field
+                            'date': transaction_data.get('date'),
+                            
+                            # Metadata fields
+                            'description': transaction_data.get('description'),
+                            'account_id': transaction_data.get('account_id'),
+                            'user_id': transaction_data.get('user_id'),
+                            
+                            # Category fields
+                            'predicted_category': transaction_data.get('predicted_category', 'Uncategorized'),
+                            'predicted_subcategory': transaction_data.get('predicted_subcategory', 'Uncategorized'),
+                            
+                            # Status and metadata
+                            'status': 'processed',
+                            'last_modified': firestore.SERVER_TIMESTAMP,
+                            
+                            # Preserve created_at from existing data
+                            'created_at': existing_data.get('created_at', firestore.SERVER_TIMESTAMP)
+                        }
+                        
+                        # Add date components if present
+                        date_components = {
+                            'day': transaction_data.get('day'),
+                            'day_name': transaction_data.get('day_name'),
+                            'month': transaction_data.get('month'),
+                            'year': transaction_data.get('year')
+                        }
+                        updates.update({k: v for k, v in date_components.items() if v is not None})
+                        
+                        # Only include non-None values
+                        updates = {k: v for k, v in updates.items() if v is not None}
+                        
+                        # Log the update operation
+                        self.logger.info(f"Updating existing transaction: {doc_id}")
+                        self.logger.debug(f"Update data: {updates}")
+                        
+                        # Use update instead of set to preserve other fields
+                        batch.update(doc_ref, updates)
+                    else:
+                        # For new documents, use set with the full transaction_data
+                        metadata = {
+                            'created_at': firestore.SERVER_TIMESTAMP,
+                            'last_modified': firestore.SERVER_TIMESTAMP,
+                            'status': 'processed',
+                            'predicted_category': transaction_data.get('predicted_category', 'Uncategorized'),
+                            'predicted_subcategory': transaction_data.get('predicted_subcategory', 'Uncategorized')
+                        }
+                        transaction_data.update(metadata)
+                        batch.set(doc_ref, transaction_data)
+                        self.logger.info(f"Creating new transaction: {doc_id}")
                     
                     # Add to category index if present
-                    if 'category' in transaction_data:
+                    if transaction_data.get('predicted_category'):
                         category_ref = self.db.collection('users').document(user_id)\
-                                        .collection('categories').document(transaction_data['category'])
+                                        .collection('categories').document(transaction_data['predicted_category'])
                         batch.set(category_ref, {
                             'last_used': firestore.SERVER_TIMESTAMP,
                             'transaction_count': firestore.Increment(1)
                         }, merge=True)
-                    
-                    self.logger.info(f"Adding transaction to batch: {transaction_data['id']}")
-                    batch.set(doc_ref, transaction_data)
                 
                 # Only commit if there are operations in the batch
                 if batch._write_pbs:
@@ -164,7 +216,7 @@ class TransactionDAO:
         """
         Query transactions with filters
         filters format: {
-            'category': 'groceries',
+            'predicted_category': 'groceries',
             'date_from': '2024-01-01',
             'date_to': '2024-02-01',
             'amount_min': 0,
@@ -191,8 +243,8 @@ class TransactionDAO:
                     query = query.where(filter=FieldFilter('amount', '<=', str(filters['amount_max'])))
                 
                 # Apply category filter
-                if 'category' in filters:
-                    query = query.where(filter=FieldFilter('category', '==', filters['category']))
+                if 'predicted_category' in filters:
+                    query = query.where(filter=FieldFilter('predicted_category', '==', filters['predicted_category']))
                 
                 # Apply text search
                 if 'search' in filters:
@@ -243,8 +295,8 @@ class TransactionDAO:
             transaction_ref = self.db.collection('users').document(user_id)\
                                 .collection('transactions').document(transaction_id)
             batch.update(transaction_ref, {
-                'category': new_category,
-                'updated_at': firestore.SERVER_TIMESTAMP
+                'predicted_category': new_category,
+                'last_modified': firestore.SERVER_TIMESTAMP
             })
             
             # Update category stats
@@ -316,7 +368,7 @@ class TransactionDAO:
                         .collection('transactions').document(transaction_id)
             
             # Add update timestamp
-            updates['updated_at'] = firestore.SERVER_TIMESTAMP
+            updates['last_modified'] = firestore.SERVER_TIMESTAMP
             
             doc_ref.update(updates)
             return True

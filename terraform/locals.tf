@@ -114,12 +114,16 @@ locals {
     for key, value in local.cloud_function.environment_variables :
     key => replace(
       replace(
-        value,
-        "%PROJECT_ID%",
-        local.project_id
+        replace(
+          value,
+          "%PROJECT_ID%",
+          local.project_id
+        ),
+        "%PROJECT_TIER%",
+        local.tier_string
       ),
-      "%PROJECT_TIER%",
-      local.tier_string
+      "%REGION%",
+      local.region
     )
   }
 }

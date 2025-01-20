@@ -295,30 +295,42 @@ class TestTransactionParser(unittest.TestCase):
     
     def test_specific_message(self):
         """Test parsing of a specific Gmail message by ID"""
-        email = "clairejablonski@gmail.com"  # The email we're testing
-        message_id = "193e38858583a58b"
+        email = "sdancy.10@gmail.com"  # The email we're testing
+        
+        # Use the exact Message ID
+        message_id = "<96212017.5668883.1736584621786.JavaMail.webuser@iaasn00692072>"
         
         # Get Gmail service
         service = get_gmail_service(email)
         
-        # Get the specific message
-        message = service.users().messages().get(userId='me', id=message_id, format='full').execute()
+        # Search for the message by Message ID
+        query = f"rfc822msgid:{message_id}"
+        results = service.users().messages().list(userId='me', q=query).execute()
+        
+        if not results.get('messages'):
+            print(f"No messages found matching Message ID: {message_id}")
+            return
+            
+        # Get the first matching message
+        message = service.users().messages().get(userId='me', id=results['messages'][0]['id'], format='full').execute()
         
         # Get message details for debugging
         headers = {h['name']: h['value'] for h in message['payload']['headers']}
         subject = headers.get('Subject', 'No subject')
+        notification_id_header = headers.get('NOTIFICATION-ID', 'No notification ID')
         body = self._get_message_body(message['payload'])
         
         # Print exact content we're matching against
         print("\n=== Content Being Matched ===")
         print(f"Subject: {subject}")
+        print(f"Notification ID: {notification_id_header}")
         print(f"Body (first 1000 chars):\n{body[:1000]}")
         
         # Try to parse it
         result = self.parser.parse_gmail_message(message)
         
         # Get patterns from the template that should match
-        template_name = 'Chase Credit Cards - ??' # The template we expect to match
+        template_name = 'Chase Payment Sent'  # The template we expect to match
         patterns = self._get_template_patterns(template_name)
         
         # Try manual regex matches for debugging
@@ -338,10 +350,11 @@ class TestTransactionParser(unittest.TestCase):
                         pass
                 else:
                     print("No match found")
-        
+
         # Record test results with detailed logging
         test_result = {
             'test_name': f'Specific Message Test (ID: {message_id})',
+            'notification_id': notification_id_header,
             'template': result['template_used'] if result else 'Failed to parse',
             'patterns': patterns,
             'matches': {}
@@ -357,6 +370,7 @@ class TestTransactionParser(unittest.TestCase):
         else:
             print(f"\nMessage Details:")
             print(f"Subject: {subject}")
+            print(f"Notification ID: {notification_id_header}")
             print(f"Body: {body}...")
             
         self.__class__.test_results.append(test_result)

@@ -172,12 +172,13 @@ class TransactionParser:
             # capture the vendor in either "You sent $... to ..." 
             # or from the <td> cell labeled "Recipient":
             # -- Removed the "=+to" and replaced with "\s+to\s+" to match your actual email text.
-            'vendor': r'(?:You sent \$[\d,.]+\s+to\s+|Recipient<\/td>\s*<td[^>]*>)([^\r\n]+)',
+            # 'vendor': r'(?:You sent \$[\d,.]+\s+to\s+|Recipient<\/td>\s*<td[^>]*>)([^\r\n]+)\s*<\/td>)',
+            'vendor': r'(?:You sent \$[\d,.]+\s+to\s+([^<\r\n\s]+)|Recipient<\/td>\s*<td[^>]*>\s*([^<\r\n\s]+))',
             
             # capture date from text after "Sent on"
             # -- If your email has <td> tags, you can still rely on them. 
             # -- Otherwise, this simpler pattern grabs the date up to the next "<" (or line break).
-            'date': r'Sent on\s*\r?\n\s*([^\r\n<]+)',
+            'date': r'Sent on<\/td>[\s\S]*?<td[^>]*>\s*(?:<[^>]+>\s*)*([^<]+(?:AM|PM)\sET)',
             
             # match the subject line format:
             'subject_pattern': r'You sent \$[\d,.]+.*account ending in'
@@ -251,10 +252,10 @@ class TransactionParser:
         },
         'Chase Checking Acct - Bill Pay': {
             'iterate_results': False,
-            'account': r'(?<=ending in )(\d+)',
-            'amount': r'\$([0-9,.]+)',
-            'vendor': r'(?s)payment to ([^.]+?)(?= on)',
-            'date': r'on ([^.]+?)(?= executed)'
+            'account': r'(?:Chase [^(]+\(...(\d{4})\)|Account ending in[^<]*\(...(\d{4})\))',
+            'amount': r'(\$\d+(?:,\d{3})*(?:\.\d{2}))',
+            'vendor': r'(?s)(?<=Recipient<\/td>).*?<td[^>]*>\s*(.*?)\s*<\/td>',
+            'date': r'Made on<\/td>[\s\S]*?<td[^>]*>\s*(?:<[^>]+>\s*)*([^<]+(?:AM|PM)\sET)'
         },
         'Chase Credit Cards - HTML Template': {
             'iterate_results': True,
@@ -648,7 +649,7 @@ class TransactionParser:
                             self.logger.info(f"❌ Date not found in {body_type} body - Pattern: {template['date']}")
                     
                     # Check if we have the minimum required fields
-                    if 'amount' in matches_found and 'account' in matches_found and 'vendor' in matches_found:
+                    if 'amount' in matches_found and 'account' in matches_found and 'vendor' in matches_found and 'date' in matches_found:
                         self.logger.info(f"\n✓ Found matching template: {template_name} in {body_type} body")
                         matches['found'] = matches_found  # Add the found matches to the matches dictionary
                         return template_name, matches
@@ -660,6 +661,8 @@ class TransactionParser:
                             missing.append('account')
                         if 'vendor' not in matches_found:
                             missing.append('vendor')
+                        if 'date' not in matches_found:
+                            missing.append('date')
                         self.logger.info(f"❌ Missing required fields in {body_type} body: {', '.join(missing)}")
             
             except Exception as e:
