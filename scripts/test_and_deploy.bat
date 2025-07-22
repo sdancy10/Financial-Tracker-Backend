@@ -1,6 +1,10 @@
 @echo off
 setlocal
 
+REM Set GOOGLE_APPLICATION_CREDENTIALS for Python and Google SDKs
+set "GOOGLE_APPLICATION_CREDENTIALS=%CD%\credentials\service-account-key.json"
+echo Set GOOGLE_APPLICATION_CREDENTIALS to: %GOOGLE_APPLICATION_CREDENTIALS%
+
 REM Get the current directory
 set "CURRENT_DIR=%CD%"
 echo Current directory is: %CURRENT_DIR%

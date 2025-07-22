@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import platform
 import html
 from email.utils import parsedate_to_datetime
+import quopri  # Added import for quoted-printable decoding
 
 class TransactionParser:
     """Parses transaction data from various sources"""
@@ -144,14 +145,14 @@ class TransactionParser:
             'iterate_results': False,
             'account': r'(?<=CK)(\d{4})',
             'amount': r'(?<=for\s\$)(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\b(?=(?:\s+(?:from|at)|$))',
-            'vendor': r'(?<=from\s)(.*?)(?=\s+to\s+)',
+            'vendor': r'(?<= at )(.+?)(?= from)|(?<=from\s)(.+?)(?= to )',
             'date': r'(?<=as of )(\d{1,2}\/\d{1,2}\/\d{2}\s+\d{1,2}:\d{2}\s+(?:AM|PM)\s+ET)'
         },
         'Target Credit Card': {
             'iterate_results': False,
             'account': r'(?<=ending in )[\d]{4}',
             'amount': r'(?<=transaction of \$)(\d{1,3}(?:,\d{3})*(?:\.\d+)?)(?= at)',
-            'vendor': r'(?s)(?<=\sat\s)(.*?)(?=\s+was)',
+            'vendor': r'(?s)(?<=\sat\s)(.*?)(?=\s+was|\s+has)',
             'date': ''
         },
         'US Bank - Credit Card': {
@@ -192,9 +193,9 @@ class TransactionParser:
         },
         'Discover Credit Card': {
             'iterate_results': False,
-            'account': r'(?:Last 4 #:&nbsp;|Account ending in\s*)(\d{4})',
+            'account': r'(?:Last 4 #:\s*[ ]*|Account ending in\s*)(\d{4})',
             'amount': r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
-            'vendor': r'(?:Merchant:\s*|at\s+)([^<\n\r]+?)(?=(?:\s*<br\/>|\s*$|\s*,))',
+            'vendor': r'(?:Merchant\s*:+\s*|at\s+)([^<\n\r]+?)(?=\s*(?:Amount:|\s*$|\s*,))',
             'date': r'(?:Date:\s*|Transaction Date:\s*)([^<\n\r]+?)(?=(?:\s*<br\/>|\s*$))'
         },
 
@@ -275,7 +276,7 @@ class TransactionParser:
             'iterate_results': False,
             'account': r'(?<=CK)(\d{4})',
             'amount': r'(?<=for \$)(([0-9,.]+)*)',
-            'vendor': r'(?<= at )(.*)(?= from)',
+            'vendor': r'(?<= at)(=?\s*)(.*)(?= from)',
             'date': ''
         },
         'Chase Payment Alert': {
@@ -313,19 +314,24 @@ class TransactionParser:
             message_id = message.get('message_id')  # Original Message-ID from headers
             gmail_id = message.get('gmail_id')  # Gmail API ID
             
-            # Log message details
+            # Log message details (concise version)
             header_dict = {h['name']: h['value'] for h in headers}
-            self.logger.info(f"\n=== Processing Email ===")
-            self.logger.info(f"Gmail ID: {gmail_id}")
-            self.logger.info(f"Subject: {header_dict.get('Subject', 'N/A')}")
-            self.logger.info(f"From: {header_dict.get('From', 'N/A')}")
-            self.logger.info(f"Date: {header_dict.get('Date', 'N/A')}")
-            self.logger.info(f"Body Preview: {body[:200]}...")
+            subject = header_dict.get('Subject', 'N/A')
+            from_addr = header_dict.get('From', 'N/A')
+            
+            # Only log essential info at INFO level
+            self.logger.info(f"Processing email: {subject[:50]}... from {from_addr}")
+            
+            # Verbose logging at DEBUG level
+            self.logger.debug(f"Gmail ID: {gmail_id}")
+            self.logger.debug(f"Full Subject: {subject}")
+            self.logger.debug(f"Date: {header_dict.get('Date', 'N/A')}")
+            self.logger.debug(f"Body Preview: {body[:200]}...")
             
             # Find matching template
             template_name, matches = self._find_matching_template(headers, body, raw_body)
             if not template_name or not matches:
-                self.logger.warning(f"No matching template found for message {gmail_id}")
+                self.logger.debug(f"No matching template found for message {gmail_id}")
                 return None
             
             # Extract transaction data using template
@@ -341,32 +347,33 @@ class TransactionParser:
             # Add template used
             transaction['template_used'] = template_name
             
-            # Log successful parsing
-            self.logger.info("\n=== Parsing Results ===")
-            self.logger.info(f"Template Used: {template_name}")
-            self.logger.info(f"Transaction Details:")
-            self.logger.info(f"  - Amount: {transaction.get('amount')}")
-            self.logger.info(f"  - Vendor: {transaction.get('vendor')}")
-            self.logger.info(f"  - Account: {transaction.get('account')}")
-            self.logger.info(f"  - Date: {transaction.get('date')}")
-            self.logger.info("====BODY====")
-            self.logger.info(f"{matches.get('body_type', 'unknown')} body used for matching")
-            self.logger.info(f"{matches.get('body', '')}")
+            # Log successful parsing (concise)
+            self.logger.info(f"Successfully parsed: {transaction.get('vendor', 'Unknown')} - ${transaction.get('amount', '0')} using {template_name}")
+            
+            # Verbose details at DEBUG level
+            self.logger.debug(f"Transaction Details:")
+            self.logger.debug(f"  - Amount: {transaction.get('amount')}")
+            self.logger.debug(f"  - Vendor: {transaction.get('vendor')}")
+            self.logger.debug(f"  - Account: {transaction.get('account')}")
+            self.logger.debug(f"  - Date: {transaction.get('date')}")
             
             return transaction
         except Exception as e:
             self.logger.error(f"Error parsing Gmail message: {str(e)}")
             import traceback
-            self.logger.error(traceback.format_exc())
+            self.logger.debug(traceback.format_exc())  # Full traceback at DEBUG level
             return None
         
     def _sanitize_body(self, body: str) -> str:
         """
         Remove potentially malicious or unwanted HTML/scripts/styles,
-        remove all HTML tags, and decode entities like &rsquo; or &#x2F;.
+        remove all HTML tags, and decode entities like ’ or /.
         """
         if not body:
             return ""
+        
+        # Decode quoted-printable first to handle soft breaks
+        body = quopri.decodestring(body.encode('utf-8')).decode('utf-8', errors='replace')
             
         # Remove script tags and content
         body = re.sub(r'<script.*?>.*?</script>', '', body, flags=re.DOTALL | re.IGNORECASE)
@@ -383,7 +390,7 @@ class TransactionParser:
         # Replace multiple spaces/newlines with single space
         body = re.sub(r'\s+', ' ', body)
         
-        # Decode HTML entities (e.g. &rsquo; -> ', &#x2F; -> /, &nbsp; -> space)
+        # Decode HTML entities (e.g. ’ -> ', / -> /,   -> space)
         body = html.unescape(body)
         
         # Remove any remaining HTML-like artifacts
@@ -532,34 +539,30 @@ class TransactionParser:
         subject = header_dict.get('Subject', '')
         from_addr = header_dict.get('From', '')
         
-        self.logger.info("\n=== Template Matching ===")
+        self.logger.debug("Starting template matching...")
         
         # Try all templates until one succeeds
         for template_name, template in self.TEMPLATES.items():
             try:
-                self.logger.info(f"\nTrying template: {template_name}")
+                self.logger.debug(f"Trying template: {template_name}")
                 
                 # Check if email_from matches if specified
                 if template.get('email_from') and template['email_from'] != from_addr:
-                    self.logger.info(f"❌ Skipping - email_from doesn't match")
-                    self.logger.info(f"  Expected: {template['email_from']}")
-                    self.logger.info(f"  Got: {from_addr}")
+                    self.logger.debug(f"❌  Skipping - email_from doesn't match")
                     continue
                 
                 # Check if subject matches if specified
                 if template.get('subject_pattern'):
                     subject_match = re.search(template['subject_pattern'], subject, re.IGNORECASE | re.DOTALL)
                     if not subject_match:
-                        self.logger.info(f"❌ Skipping - subject_pattern doesn't match")
-                        self.logger.info(f"  Pattern: {template['subject_pattern']}")
-                        self.logger.info(f"  Subject: {subject}")
+                        self.logger.debug(f"❌  Skipping - subject_pattern doesn't match")
                         continue
                     else:
-                        self.logger.info(f"✓ Subject pattern matches")
+                        self.logger.debug(f"✓  Subject pattern matches")
                 
                 # Try matching against both raw and sanitized body
                 for body_type, current_body in [('sanitized', body),('raw', raw_body)]:
-                    self.logger.info(f"\nTrying {body_type} body:")
+                    self.logger.debug(f"  Trying {body_type} body")
                     
                     # Create matches dictionary with all necessary data
                     matches = {
@@ -577,7 +580,7 @@ class TransactionParser:
                         cells = re.findall(template['account'], current_body, re.IGNORECASE | re.DOTALL)
                         if cells:
                             matches['cells'] = cells
-                            self.logger.info(f"✓ Found matching cells in {body_type} body")
+                            self.logger.debug(f"✓  Found matching cells in {body_type} body")
                             return template_name, matches
                     
                     # For non-iterate templates, check if we have matches
@@ -590,9 +593,9 @@ class TransactionParser:
                         if amount_matches:
                             has_matches = True
                             matches_found['amount'] = amount_matches[0].group(1) if amount_matches[0].groups() else amount_matches[0].group(0)
-                            self.logger.info(f"✓ Amount found in {body_type} body: {matches_found['amount']}")
+                            self.logger.debug(f"✓  Amount found in {body_type} body: {matches_found['amount']}")
                         else:
-                            self.logger.info(f"❌ Amount not found in {body_type} body - Pattern: {template['amount']}")
+                            self.logger.debug(f"❌  Amount not found in {body_type} body - Pattern: {template['amount']}")
                     
                     # Try vendor pattern
                     if template.get('vendor'):
@@ -604,12 +607,12 @@ class TransactionParser:
                                     has_matches = True
                                     # Try each group until we find a non-empty one
                                     groups = vendor_matches[0].groups()
-                                    vendor = next((g for g in groups if g and g.strip()), None)
+                                    vendor = next((g.strip() for g in groups if g), None)
                                     if vendor:
-                                        matches_found['vendor'] = vendor.strip()
-                                        self.logger.info(f"✓ Vendor found in {body_type} body: {matches_found['vendor']}")
+                                        matches_found['vendor'] = vendor
+                                        self.logger.debug(f"✓  Vendor found in {body_type} body: {matches_found['vendor']}")
                                 else:
-                                    self.logger.info(f"❌ Vendor not found in {body_type} body - Pattern: {template['vendor']}")
+                                    self.logger.debug(f"❌  Vendor not found in {body_type} body - Pattern: {template['vendor']}")
                             elif template['vendor'].startswith('Merchant'):
                                 # Special handling for Merchant pattern
                                 vendor_matches = list(re.finditer(template['vendor'], current_body, re.IGNORECASE | re.DOTALL))
@@ -619,15 +622,15 @@ class TransactionParser:
                                     vendor = vendor_matches[0].group(1) if vendor_matches[0].groups() else vendor_matches[0].group(0)
                                     if vendor:
                                         matches_found['vendor'] = vendor.strip()
-                                        self.logger.info(f"✓ Vendor found in {body_type} body: {matches_found['vendor']}")
+                                        self.logger.debug(f"✓  Vendor found in {body_type} body: {matches_found['vendor']}")
                                         self.logger.debug(f"Full vendor match: {vendor_matches[0].group(0)}")
                                 else:
-                                    self.logger.info(f"❌ Vendor not found in {body_type} body - Pattern: {template['vendor']}")
+                                    self.logger.debug(f"❌  Vendor not found in {body_type} body - Pattern: {template['vendor']}")
                             else:
                                 # It's a fixed string
                                 has_matches = True
                                 matches_found['vendor'] = template['vendor']
-                                self.logger.info(f"✓ Vendor (fixed) in {body_type} body: {matches_found['vendor']}")
+                                self.logger.debug(f"✓  Vendor (fixed) in {body_type} body: {matches_found['vendor']}")
                     
                     # Try account pattern
                     if template.get('account'):
@@ -635,24 +638,24 @@ class TransactionParser:
                         if account_matches:
                             has_matches = True
                             matches_found['account'] = account_matches[0].group(1) if account_matches[0].groups() else account_matches[0].group(0)
-                            self.logger.info(f"✓ Account found in {body_type} body: {matches_found['account']}")
+                            self.logger.debug(f"✓  Account found in {body_type} body: {matches_found['account']}")
                         else:
-                            self.logger.info(f"❌ Account not found in {body_type} body - Pattern: {template['account']}")
+                            self.logger.debug(f"❌  Account not found in {body_type} body - Pattern: {template['account']}")
                     
                     # Try date pattern
                     if template.get('date'):
                         date_matches = list(re.finditer(template['date'], current_body, re.IGNORECASE | re.DOTALL))
                         if date_matches:
                             matches_found['date'] = date_matches[0].group(1) if date_matches[0].groups() else date_matches[0].group(0)
-                            self.logger.info(f"✓ Date found in {body_type} body: {matches_found['date']}")
+                            self.logger.debug(f"✓  Date found in {body_type} body: {matches_found['date']}")
                         else:
-                            self.logger.info(f"❌ Date not found in {body_type} body - Pattern: {template['date']}")
+                            self.logger.debug(f"❌  Date not found in {body_type} body - Pattern: {template['date']}")
                     
                     # Check if the template has a date pattern defined
                     date_required = 'date' in template and template['date'] != ''
                     
                     if 'amount' in matches_found and 'account' in matches_found and 'vendor' in matches_found and (not date_required or 'date' in matches_found):
-                        self.logger.info(f"\n✓ Found matching template: {template_name} in {body_type} body")
+                        self.logger.debug(f"\n✓  Found matching template: {template_name} in {body_type} body")
                         matches['found'] = matches_found  # Add the found matches to the matches dictionary
                         return template_name, matches
                     else:
@@ -665,7 +668,7 @@ class TransactionParser:
                             missing.append('vendor')
                         if 'date' not in matches_found:
                             missing.append('date')
-                        self.logger.info(f"❌ Missing required fields in {body_type} body: {', '.join(missing)}")
+                        self.logger.debug(f"❌  Missing required fields in {body_type} body: {', '.join(missing)}")
             
             except Exception as e:
                 self.logger.error(f"\n❌ Error processing template {template_name}: {str(e)}")
@@ -673,7 +676,7 @@ class TransactionParser:
                 self.logger.error(traceback.format_exc())
                 continue
         
-        self.logger.info("\n❌ No matching template found in either raw or sanitized body")
+        self.logger.debug("\n❌  No matching template found in either raw or sanitized body")
         return None, None
     
     def _extract_transaction_data(self, template_name: str, matches: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -777,4 +780,4 @@ class TransactionParser:
             self.logger.error(f"Error extracting transaction data: {str(e)}")
             import traceback
             self.logger.error(traceback.format_exc())
-            return None 
+            return None

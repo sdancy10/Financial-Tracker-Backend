@@ -37,7 +37,11 @@ from src.utils.credentials_manager import CredentialsManager
 from src.utils.config import Config
 from src.utils.test_utils import get_test_user
 from src.mock.api.mock_gmail_synthetic_api import create_mock_message
-from src.mock.api.mock_messages_failures import MOCK_FAILURES
+# Mock Failures may not exist, try to import
+try:
+    from src.mock.api.mock_messages_failures import MOCK_FAILURES
+except ImportError:
+    MOCK_FAILURES = None  # or MOCK_FAILURES = {}
 
 def get_gmail_service(email: str = None):
     """Set up Gmail API client"""
@@ -295,11 +299,12 @@ class TestTransactionParser(unittest.TestCase):
     
     def test_specific_message(self):
         """Test parsing of a specific Gmail message by ID"""
-        email = "sdancy.10@gmail.com"  # The email we're testing
+        email = "clairejablonski@gmail.com"  # The email we're testing
         
         # Use the exact Message ID
-        message_id = "<96212017.5668883.1736584621786.JavaMail.webuser@iaasn00692072>"
-        
+        message_id = "<01000198319991c0-abbce2ca-a623-4aa1-bfee-e005fa9bc183-000000@email.amazonses.com>" # unread discover
+        message_id = "<47v2xbtke8-1@rfxt2mgwppa0002.fiserv.one>" #target
+        # message_id = "<dc51bf77-6277-4a04-bda9-da559fe49255@ind1s01mta612.xt.local>" # huntington
         # Get Gmail service
         service = get_gmail_service(email)
         
@@ -324,13 +329,15 @@ class TestTransactionParser(unittest.TestCase):
         print("\n=== Content Being Matched ===")
         print(f"Subject: {subject}")
         print(f"Notification ID: {notification_id_header}")
-        print(f"Body (first 1000 chars):\n{body[:1000]}")
+        print("==============")
+        print(f"Body (first 1000 chars):\n{body}")
+        print("==============")
         
         # Try to parse it
         result = self.parser.parse_gmail_message(message)
         
         # Get patterns from the template that should match
-        template_name = 'Chase Payment Sent'  # The template we expect to match
+        template_name = 'Target Credit Card'  # The template we expect to match
         patterns = self._get_template_patterns(template_name)
         
         # Try manual regex matches for debugging

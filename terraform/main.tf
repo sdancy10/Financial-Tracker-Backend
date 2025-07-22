@@ -104,6 +104,7 @@ resource "google_cloudfunctions_function" "transaction_processor" {
     "GOOGLE_CLOUD_PROJECT" = local.project_id
     "PROJECT_ID"           = local.project_id
     "REGION"               = local.region
+    "LOG_LEVEL"            = "INFO"  # Set to DEBUG for verbose logging
   }
 
   depends_on = [
@@ -385,6 +386,15 @@ resource "google_project_iam_member" "function_datastore" {
   
   project = local.project_id
   role    = "roles/datastore.user"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for Cloud Function to publish to Pub/Sub
+resource "google_project_iam_member" "function_pubsub_publisher" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/pubsub.publisher"
   member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
 }
 

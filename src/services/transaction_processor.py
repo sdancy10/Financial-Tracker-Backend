@@ -14,6 +14,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Set transaction parser to INFO level unless explicitly set to DEBUG
+parser_logger = logging.getLogger('src.utils.transaction_parser')
+if log_level != 'DEBUG':
+    parser_logger.setLevel(logging.INFO)
+
 # CORS headers
 headers = {
     'Access-Control-Allow-Origin': '*',
@@ -98,7 +103,42 @@ def process_transactions(cloud_event):
         # Initialize config and service inside function
         config = Config()
         service = TransactionService(config.get('project', 'id'))
-        results = service.process_all_users()
+        
+        # Check if we should process a single user or all users
+        # Default to single user processing to avoid timeouts
+        processing_mode = "single"  # Can be overridden by Pub/Sub message
+        user_id = None
+        user_email = None
+        
+        # Parse the Pub/Sub message data if available
+        try:
+            if hasattr(cloud_event, 'data') and cloud_event.data:
+                if isinstance(cloud_event.data, dict) and "message" in cloud_event.data:
+                    message = cloud_event.data["message"]
+                    if "data" in message:
+                        message_data = base64.b64decode(message["data"]).decode()
+                        data = json.loads(message_data)
+                        processing_mode = data.get('mode', 'single')
+                        user_id = data.get('user_id')
+                        user_email = data.get('email')
+                        logger.info(f"Received message with mode: {processing_mode}")
+        except:
+            pass  # Use default processing mode
+        
+        # Process based on mode
+        if processing_mode == "single":
+            logger.info("Triggering individual executions for each user")
+            results = service.trigger_individual_user_processing()
+        elif processing_mode == "process_specific_user" and user_id and user_email:
+            logger.info(f"Processing specific user: {user_email}")
+            results = service.process_specific_user(user_id, user_email)
+        elif processing_mode == "all":
+            logger.info("Processing all users in single execution (may timeout with many users)")
+            results = service.process_all_users()
+        else:
+            logger.warning(f"Unknown processing mode or missing user info: {processing_mode}")
+            # Fallback to triggering individual processing
+            results = service.trigger_individual_user_processing()
         
         # Log the results
         logger.info(f"Processing completed with results: {json.dumps(results, indent=2)}")

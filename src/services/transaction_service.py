@@ -229,40 +229,20 @@ class TransactionService:
             # Initialize Gmail utility with OAuth credentials
             gmail = GmailUtil(user_credentials)
             
-            # Always check unread transaction emails
+            # Only fetch unread transaction emails
+            # This is more efficient and ensures we don't process emails multiple times
             unread_query = 'label:Transactions is:unread'
-            self.logger.info(f"Fetching unread transaction emails with query: {unread_query}")
+            self.logger.info(f"Fetching unread transaction emails for {user_credentials['email']} with query: {unread_query}")
             unread_transactions = gmail.fetch_transaction_emails(unread_query)
             
-            # Check for additional emails after last sync if available
-            sync_transactions = []
-            if user_credentials.get('last_sync'):
-                sync_query = f'label:Transactions after:{user_credentials["last_sync"]}'
-                self.logger.info(f"Fetching additional emails after last sync with query: {sync_query}")
-                sync_transactions = gmail.fetch_transaction_emails(sync_query)
-            
-            # Combine results, ensuring no duplicates by message ID
-            seen_message_ids = set()
+            # Convert to list with IDs
             raw_transactions_with_ids = []
-            
-            # Add unread transactions first
             for transaction, message_id in unread_transactions:
-                if message_id not in seen_message_ids:
-                    seen_message_ids.add(message_id)
-                    if transaction:  # Transaction was successfully parsed
-                        self.logger.info(f"Found unread transaction with message ID: {message_id}")
-                        raw_transactions_with_ids.append((transaction, message_id))
-                    else:  # Failed to parse transaction
-                        self.logger.warning(f"Failed to parse transaction from email {message_id} for {user_credentials['email']}")
-            
-            # Add transactions after last sync
-            for transaction, message_id in sync_transactions:
-                if message_id not in seen_message_ids:
-                    seen_message_ids.add(message_id)
-                    if transaction:  # Transaction was successfully parsed
-                        raw_transactions_with_ids.append((transaction, message_id))
-                    else:  # Failed to parse transaction
-                        self.logger.warning(f"Failed to parse transaction from email {message_id} for {user_credentials['email']}")
+                if transaction:  # Transaction was successfully parsed
+                    self.logger.info(f"Found unread transaction with message ID: {message_id}")
+                    raw_transactions_with_ids.append((transaction, message_id))
+                else:  # Failed to parse transaction
+                    self.logger.warning(f"Failed to parse transaction from email {message_id} for {user_credentials['email']}")
             
             if not raw_transactions_with_ids:
                 self.logger.info(f"No new transactions found for {user_credentials['email']}")
@@ -456,5 +436,117 @@ class TransactionService:
         finally:
             results['end_time'] = datetime.now().isoformat()
             self.logger.info(f"Processing complete: {results}")
+        
+        return results
+    
+ 
+
+    def trigger_individual_user_processing(self) -> Dict[str, Any]:
+        """Trigger separate Cloud Function executions for each user"""
+        from google.cloud import pubsub_v1
+        import json
+        
+        results = {
+            'triggered_users': [],
+            'failed_triggers': [],
+            'start_time': datetime.now().isoformat(),
+            'end_time': None,
+            'total_users': 0
+        }
+        
+        try:
+            # Initialize Pub/Sub publisher
+            publisher = pubsub_v1.PublisherClient()
+            topic_path = publisher.topic_path(self.project_id, 'scheduled-transactions')
+            
+            # Get all users with credentials
+            all_user_credentials = self.get_user_credentials()
+            results['total_users'] = len(all_user_credentials)
+            
+            if not all_user_credentials:
+                self.logger.info("No users with valid credentials found")
+                return results
+            
+            self.logger.info(f"Triggering individual processing for {len(all_user_credentials)} users")
+            
+            # Trigger a separate execution for each user
+            for user_creds in all_user_credentials:
+                try:
+                    # Create message with specific user processing mode
+                    message_data = {
+                        'mode': 'process_specific_user',
+                        'user_id': user_creds['user_id'],
+                        'email': user_creds['email']
+                    }
+                    
+                    # Publish message
+                    future = publisher.publish(
+                        topic_path,
+                        data=json.dumps(message_data).encode('utf-8')
+                    )
+                    
+                    # Wait for publish to complete
+                    message_id = future.result()
+                    
+                    self.logger.info(f"Triggered processing for {user_creds['email']} (message_id: {message_id})")
+                    results['triggered_users'].append(user_creds['email'])
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to trigger processing for {user_creds['email']}: {str(e)}")
+                    results['failed_triggers'].append({
+                        'email': user_creds['email'],
+                        'error': str(e)
+                    })
+            
+        except Exception as e:
+            self.logger.error(f"Error in trigger_individual_user_processing: {str(e)}")
+        finally:
+            results['end_time'] = datetime.now().isoformat()
+            self.logger.info(f"Triggered {len(results['triggered_users'])} users, {len(results['failed_triggers'])} failed")
+        
+        return results
+    
+    def process_specific_user(self, user_id: str, email: str) -> Dict[str, Any]:
+        """Process a specific user by ID and email"""
+        results = {
+            'success': [],
+            'failed': [],
+            'start_time': datetime.now().isoformat(),
+            'end_time': None,
+            'user_processed': None
+        }
+        
+        try:
+            self.logger.info(f"Processing specific user: {email} ({user_id})")
+            
+            # Get credentials for the specific user
+            user_credentials = None
+            all_user_credentials = self.get_user_credentials()
+            
+            for creds in all_user_credentials:
+                if creds['user_id'] == user_id and creds['email'] == email:
+                    user_credentials = creds
+                    break
+            
+            if not user_credentials:
+                self.logger.error(f"No credentials found for user {email} ({user_id})")
+                results['failed'].append(email)
+                results['user_processed'] = email
+                return results
+            
+            # Process the user
+            if self.process_user_transactions(user_credentials):
+                results['success'].append(email)
+            else:
+                results['failed'].append(email)
+            
+            results['user_processed'] = email
+            
+        except Exception as e:
+            self.logger.error(f"Error processing specific user {email}: {str(e)}")
+            results['failed'].append(email)
+        finally:
+            results['end_time'] = datetime.now().isoformat()
+            self.logger.info(f"Completed processing for {email}")
         
         return results 
