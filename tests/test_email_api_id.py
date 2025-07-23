@@ -304,6 +304,7 @@ class TestTransactionParser(unittest.TestCase):
         # Use the exact Message ID
         message_id = "<01000198319991c0-abbce2ca-a623-4aa1-bfee-e005fa9bc183-000000@email.amazonses.com>" # unread discover
         message_id = "<47v2xbtke8-1@rfxt2mgwppa0002.fiserv.one>" #target
+        message_id = "<66177893-4715-46df-8736-0013e0e76552@ind1s01mta612.xt.local>" #huntington deposit
         # message_id = "<dc51bf77-6277-4a04-bda9-da559fe49255@ind1s01mta612.xt.local>" # huntington
         # Get Gmail service
         service = get_gmail_service(email)
@@ -337,7 +338,7 @@ class TestTransactionParser(unittest.TestCase):
         result = self.parser.parse_gmail_message(message)
         
         # Get patterns from the template that should match
-        template_name = 'Target Credit Card'  # The template we expect to match
+        template_name = 'Huntington Checking/Savings Deposit'  # The template we expect to match
         patterns = self._get_template_patterns(template_name)
         
         # Try manual regex matches for debugging
