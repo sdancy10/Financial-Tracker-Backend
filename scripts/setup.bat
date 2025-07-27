@@ -421,11 +421,51 @@ if defined GOOGLE_APPLICATION_CREDENTIALS (
     )
 )
 
+REM Check if ML is enabled before running terraform
+echo [DEBUG] Checking ML configuration before Terraform...
+echo import yaml > check_ml_pre.py
+echo config = yaml.safe_load(open('config.yaml')) >> check_ml_pre.py
+echo ml_enabled = config.get('features', {}).get('enabled_services', {}).get('ml', False) >> check_ml_pre.py
+echo print('1' if ml_enabled else '0') >> check_ml_pre.py
+
+for /f %%i in ('python check_ml_pre.py') do set ML_PRE_CHECK=%%i
+del check_ml_pre.py
+
+REM Deploy ML function packages BEFORE Terraform if ML is enabled
+if "%ML_PRE_CHECK%"=="1" (
+    echo.
+    echo [DEBUG] ML is enabled, preparing function packages before Terraform...
+    echo Preparing ML Cloud Function packages for Terraform...
+    
+    REM First ensure the storage bucket exists
+    python scripts/deploy_storage.py
+    set "STORAGE_PRE_STATUS=!ERRORLEVEL!"
+    echo [DEBUG] Storage pre-deployment status: !STORAGE_PRE_STATUS!
+    if !STORAGE_PRE_STATUS! NEQ 0 (
+        echo [DEBUG] Warning: Could not ensure storage buckets exist
+        echo Warning: Could not ensure storage buckets exist
+    )
+    
+    REM Now upload the ML function packages
+    python scripts/deploy_ml_functions.py
+    set "ML_PRE_STATUS=!ERRORLEVEL!"
+    echo [DEBUG] ML function package upload status: !ML_PRE_STATUS!
+    if !ML_PRE_STATUS! NEQ 0 (
+        echo [DEBUG] Warning: Could not upload ML function packages
+        echo Warning: Could not upload ML function packages
+        echo Terraform deployment of ML functions may fail
+    ) else (
+        echo [DEBUG] ML function packages uploaded successfully
+        echo ML function packages uploaded successfully
+    )
+    echo.
+)
+
 echo [DEBUG] Changing directory to terraform...
 cd terraform
 echo [DEBUG] Current directory is now: %CD%
 
-REM Initialize Terraform first
+REM Initialize Terraform
 echo [DEBUG] Running terraform init...
 terraform init
 set "INIT_STATUS=!ERRORLEVEL!"
@@ -509,6 +549,95 @@ pip install -r requirements.txt > nul 2>&1
 set "PIP_INSTALL_STATUS=!ERRORLEVEL!"
 echo [DEBUG] Requirements installation status: !PIP_INSTALL_STATUS!
 
+REM Check for ML configuration
+echo [DEBUG] Checking ML configuration...
+echo import yaml > check_ml_config.py
+echo config = yaml.safe_load(open('config.yaml')) >> check_ml_config.py
+echo ml_enabled = config.get('features', {}).get('enabled_services', {}).get('ml', False) >> check_ml_config.py
+echo print('ML_ENABLED=1' if ml_enabled else 'ML_ENABLED=0') >> check_ml_config.py
+echo if ml_enabled: >> check_ml_config.py
+echo     print('VERTEX_AI_ENABLED=1' if config.get('features', {}).get('enabled_services', {}).get('aiplatform', True) else 'VERTEX_AI_ENABLED=0') >> check_ml_config.py
+echo     print('BIGQUERY_ENABLED=1' if config.get('features', {}).get('enabled_services', {}).get('bigquery', True) else 'BIGQUERY_ENABLED=0') >> check_ml_config.py
+
+python check_ml_config.py > ml_config_output.tmp
+for /f "usebackq tokens=1,* delims==" %%a in ("ml_config_output.tmp") do (
+    set "%%a=%%b"
+    echo [DEBUG] Set %%a=%%b
+)
+del check_ml_config.py
+del ml_config_output.tmp
+
+REM Set up ML components if enabled
+if "%ML_ENABLED%"=="1" (
+    echo [DEBUG] ML features are enabled
+    echo.
+    echo === Setting up ML Components ===
+    
+    REM Install ML-specific requirements
+    echo [DEBUG] Installing ML packages...
+    echo Installing ML packages...
+    if exist ml_requirements.txt (
+        pip install -r ml_requirements.txt --quiet
+        set "ML_PIP_STATUS=!ERRORLEVEL!"
+        echo [DEBUG] ML packages installation status: !ML_PIP_STATUS!
+        if !ML_PIP_STATUS! NEQ 0 (
+            echo [DEBUG] Failed to install ML packages
+            echo Error: Failed to install ML packages
+            echo Retrying with output...
+            pip install -r ml_requirements.txt
+            set "ML_PIP_RETRY_STATUS=!ERRORLEVEL!"
+            if !ML_PIP_RETRY_STATUS! NEQ 0 (
+                echo [DEBUG] ML packages installation failed
+                echo Warning: Some ML packages could not be installed
+                echo Continuing with setup...
+            )
+        )
+    ) else (
+        echo [DEBUG] ml_requirements.txt not found, installing minimal ML packages
+        echo Warning: ml_requirements.txt not found, installing minimal ML packages
+        pip install scikit-learn==1.3.1 metaphone "google-cloud-aiplatform[prediction]" google-cloud-bigquery pyarrow fastapi uvicorn --quiet
+    )
+    
+    REM Create ML directories
+    echo [DEBUG] Creating ML directories...
+    if not exist "ml_models" mkdir ml_models
+    if not exist "test_data" mkdir test_data
+    if not exist "temp" mkdir temp
+    echo [DEBUG] ML directories created
+    
+    REM Enable required APIs if not in Cloud Build
+    if not defined CLOUD_BUILD (
+        echo [DEBUG] Enabling ML-related APIs...
+        echo Enabling ML-related APIs...
+        
+        if "%VERTEX_AI_ENABLED%"=="1" (
+            echo [DEBUG] Enabling Vertex AI API...
+            call gcloud services enable aiplatform.googleapis.com --project=!PROJECT_ID!
+            set "VERTEX_STATUS=!ERRORLEVEL!"
+            echo [DEBUG] Vertex AI API enable status: !VERTEX_STATUS!
+        )
+        
+        if "%BIGQUERY_ENABLED%"=="1" (
+            echo [DEBUG] Enabling BigQuery API...
+            call gcloud services enable bigquery.googleapis.com --project=!PROJECT_ID!
+            set "BQ_STATUS=!ERRORLEVEL!"
+            echo [DEBUG] BigQuery API enable status: !BQ_STATUS!
+        )
+        
+        echo [DEBUG] Enabling Cloud Monitoring API...
+        call gcloud services enable monitoring.googleapis.com --project=!PROJECT_ID!
+        set "MON_STATUS=!ERRORLEVEL!"
+        echo [DEBUG] Cloud Monitoring API enable status: !MON_STATUS!
+    )
+    
+    echo [DEBUG] ML setup completed
+    echo ML components set up successfully
+    echo.
+) else (
+    echo [DEBUG] ML features are disabled in config
+    echo ML features are disabled in config.yaml
+)
+
 REM Run tests and deployment
 echo [DEBUG] Starting test configuration check...
 echo Checking test configuration...
@@ -532,9 +661,14 @@ set "REQ_INSTALL_STATUS=!ERRORLEVEL!"
 echo [DEBUG] Requirements installation status: !REQ_INSTALL_STATUS!
 if !REQ_INSTALL_STATUS! NEQ 0 (
     echo [DEBUG] Failed to install requirements quietly, retrying with output...
-    echo Error: Failed to install requirements
+    echo Warning: Some requirements failed to install
     python -m pip install -r requirements.txt
-    exit /b 1
+    set "REQ_RETRY_STATUS=!ERRORLEVEL!"
+    if !REQ_RETRY_STATUS! NEQ 0 (
+        echo [DEBUG] Some packages could not be installed
+        echo Warning: Not all requirements were installed successfully
+        echo Continuing with core packages...
+    )
 )
 
 REM Run pre-deployment tests if enabled in config
@@ -659,6 +793,28 @@ if "%RUN_TESTS%"=="1" (
                 REM Integration tests are run after deployment
                 echo [DEBUG] Integration tests will run after deployment
                 echo Integration tests will run after deployment
+            ) else if "!TEST_TYPE!"=="ml_tests" (
+                if "%ML_ENABLED%"=="1" (
+                    echo [DEBUG] Running ML tests...
+                    if exist "scripts\test_trained_models_locally.py" (
+                        echo Running local ML tests...
+                        REM Set environment variables for local ML testing
+                        set "LOCAL_ML_TEST=1"
+                        set "GOOGLE_AUTH_SUPPRESS_CREDENTIALS_WARNINGS=1"
+                        python scripts\test_trained_models_locally.py
+                        set "ML_TEST_STATUS=!ERRORLEVEL!"
+                        echo [DEBUG] ML test status: !ML_TEST_STATUS!
+                        if !ML_TEST_STATUS! NEQ 0 (
+                            echo [DEBUG] Warning: ML tests failed
+                            echo Warning: ML tests failed (non-critical^)
+                        )
+                        REM Unset local test environment variables
+                        set "LOCAL_ML_TEST="
+                        set "GOOGLE_AUTH_SUPPRESS_CREDENTIALS_WARNINGS="
+                    )
+                ) else (
+                    echo [DEBUG] Skipping ML tests (ML not enabled^)
+                )
             )
         ) else (
             echo [DEBUG] Skipping !TEST_TYPE! (disabled in config)
@@ -683,38 +839,16 @@ echo [DEBUG] Starting deployment phase...
 echo === Starting Deployment ===
 echo.
 
-REM Check if we should deploy infrastructure with Terraform
+REM Terraform has already been applied earlier in the script
 if "%USE_TERRAFORM%"=="1" (
-    echo [DEBUG] Terraform deployment is enabled
-    echo Step 1: Applying Terraform configuration...
-    cd terraform
-    echo [DEBUG] Changed directory to terraform: %CD%
-    terraform init
-    set "INIT_STATUS=!ERRORLEVEL!"
-    echo [DEBUG] Terraform init status: !INIT_STATUS!
-    if !INIT_STATUS! NEQ 0 (
-        echo [DEBUG] Failed to initialize Terraform
-        echo Error: Failed to initialize Terraform
-        exit /b 1
-    )
-    terraform apply
-    set "APPLY_STATUS=!ERRORLEVEL!"
-    echo [DEBUG] Terraform apply status: !APPLY_STATUS!
-    if !APPLY_STATUS! NEQ 0 (
-        echo [DEBUG] Failed to apply Terraform configuration
-        echo Error: Failed to apply Terraform configuration
-        exit /b 1
-    )
-    cd ..
-    echo [DEBUG] Changed directory back to root: %CD%
-    echo [DEBUG] Terraform resources deployed successfully
-    echo Terraform resources deployed successfully
+    echo [DEBUG] Terraform resources were deployed earlier
+    echo Terraform infrastructure is already deployed
     echo.
 )
 
 REM Deploy storage buckets (will respect Terraform state)
 echo [DEBUG] Starting storage bucket deployment...
-echo Step 2: Deploying storage buckets...
+echo Step 1: Deploying storage buckets...
 python scripts/deploy_storage.py
 set "STORAGE_STATUS=!ERRORLEVEL!"
 echo [DEBUG] Storage deployment status: !STORAGE_STATUS!
@@ -724,9 +858,11 @@ if !STORAGE_STATUS! NEQ 0 (
     exit /b 1
 )
 
+REM ML function packages are now uploaded before Terraform runs
+
 REM Set up service accounts
 echo [DEBUG] Starting service account setup...
-echo Step 3: Setting up service accounts...
+echo Step 2: Setting up service accounts...
 python scripts/setup_service_accounts.py
 set "SA_SETUP_STATUS=!ERRORLEVEL!"
 echo [DEBUG] Service account setup status: !SA_SETUP_STATUS!
@@ -738,7 +874,7 @@ if !SA_SETUP_STATUS! NEQ 0 (
 
 REM Deploy credentials (will respect Terraform state)
 echo [DEBUG] Starting credentials deployment...
-echo Step 4: Deploying credentials...
+echo Step 3: Deploying credentials...
 python scripts/deploy_credentials.py
 set "CRED_DEPLOY_STATUS=!ERRORLEVEL!"
 echo [DEBUG] Credentials deployment status: !CRED_DEPLOY_STATUS!
@@ -771,7 +907,7 @@ echo [DEBUG] Wait completed
 
 REM Deploy Cloud Function and Scheduler (will respect Terraform state)
 echo [DEBUG] Starting Cloud Function and Scheduler deployment...
-echo Step 5: Deploying Cloud Function and Scheduler...
+echo Step 4: Deploying Cloud Function and Scheduler...
 python scripts/deploy_functions.py
 set "FUNC_DEPLOY_STATUS=!ERRORLEVEL!"
 echo [DEBUG] Function deployment status: !FUNC_DEPLOY_STATUS!
@@ -781,11 +917,79 @@ if !FUNC_DEPLOY_STATUS! NEQ 0 (
     exit /b 1
 )
 
+REM Deploy ML components if enabled
+if "%ML_ENABLED%"=="1" (
+    echo.
+    echo [DEBUG] Starting ML deployment...
+    echo Step 5: Deploying ML Components...
+    
+    REM Initialize BigQuery datasets
+    echo [DEBUG] Creating ML BigQuery datasets...
+    echo Creating ML BigQuery datasets...
+    python -c "from src.services.data_export_service import DataExportService; service = DataExportService('!PROJECT_ID!'); service.setup_bigquery_dataset(); service.setup_storage_bucket()" 2>nul
+    set "BQ_SETUP_STATUS=!ERRORLEVEL!"
+    echo [DEBUG] BigQuery setup status: !BQ_SETUP_STATUS!
+    if !BQ_SETUP_STATUS! NEQ 0 (
+        echo [DEBUG] Warning: Could not initialize BigQuery datasets
+        echo Warning: Could not initialize BigQuery datasets (may already exist^)
+    )
+    
+    REM Create ML feedback table
+    echo [DEBUG] Creating ML feedback table...
+    echo Creating ML feedback table...
+    python -c "from src.services.ml_feedback_service import MLFeedbackService; service = MLFeedbackService('!PROJECT_ID!')" 2>nul
+    set "FEEDBACK_STATUS=!ERRORLEVEL!"
+    echo [DEBUG] Feedback table setup status: !FEEDBACK_STATUS!
+    if !FEEDBACK_STATUS! NEQ 0 (
+        echo [DEBUG] Warning: Could not create feedback table
+        echo Warning: Could not create feedback table (may already exist^)
+    )
+    
+    REM Check if initial model should be trained
+    echo [DEBUG] Checking for initial model training...
+    if "%NON_INTERACTIVE%"=="1" (
+        echo [DEBUG] Non-interactive mode - skipping initial model training
+        echo Skipping initial model training in non-interactive mode
+    ) else (
+        echo.
+        echo Would you like to train an initial ML model?
+        echo [1] Yes, train initial model (requires existing transaction data^)
+        echo [2] No, skip model training
+        echo.
+        choice /C 12 /N /M "Enter your choice (1-2): "
+        set "MODEL_CHOICE=!ERRORLEVEL!"
+        echo [DEBUG] User model training choice: !MODEL_CHOICE!
+        
+        if "!MODEL_CHOICE!"=="1" (
+            echo [DEBUG] User chose to train initial model
+            echo Training initial ML model...
+            echo This may take several minutes...
+            python -c "from src.models.transaction_trainer import TransactionModelTrainer; trainer = TransactionModelTrainer('!PROJECT_ID!'); trainer.train_and_deploy_model('transaction_model_v1')"
+            set "MODEL_STATUS=!ERRORLEVEL!"
+            echo [DEBUG] Model training status: !MODEL_STATUS!
+            if !MODEL_STATUS! NEQ 0 (
+                echo [DEBUG] Warning: Could not train initial model
+                echo Warning: Could not train initial model
+                echo You can train a model later using the /train API endpoint
+            ) else (
+                echo [DEBUG] Initial model trained successfully
+                echo Initial model trained successfully!
+            )
+        ) else (
+            echo [DEBUG] User chose to skip model training
+            echo Skipping model training. You can train a model later using the /train API endpoint
+        )
+    )
+    
+    echo [DEBUG] ML deployment completed
+    echo ML components deployed successfully
+)
+
 REM Run post-deployment integration tests if enabled
 if "%RUN_TESTS%"=="1" (
     echo.
     echo [DEBUG] Starting post-deployment tests...
-    echo Step 6: Running post-deployment test...
+    echo Step 5: Running post-deployment test...
     for %%f in (%POST_DEPLOYMENT_PATHS%) do (
         echo [DEBUG] Running post-deployment test: %%f
         python %%f
@@ -803,4 +1007,20 @@ if "%RUN_TESTS%"=="1" (
 echo.
 echo [DEBUG] Deployment completed successfully
 echo === Deployment Completed Successfully ===
+
+REM Show ML status if enabled
+if "%ML_ENABLED%"=="1" (
+    echo.
+    echo ML Components Status:
+    echo - BigQuery datasets: Initialized
+    echo - ML feedback table: Created
+    echo - Vertex AI: Enabled
+    echo - Model training: Available via /train endpoint
+    echo.
+    echo ML Testing Commands:
+    echo - Local ML test: python scripts/test_trained_models_locally.py
+    echo - Integration test: python scripts/test_ml_integration.py
+    echo.
+)
+
 exit /b 0

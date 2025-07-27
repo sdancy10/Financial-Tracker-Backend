@@ -5,6 +5,7 @@ from src.utils.credentials_manager import CredentialsManager
 from src.utils.gmail_util import GmailUtil
 from src.utils.validation import TransactionValidator
 from src.utils.config import Config
+from src.services.ml_prediction_service import MLPredictionService
 import logging
 from datetime import datetime
 from google.cloud import firestore
@@ -39,6 +40,14 @@ class TransactionService:
         
         # Get sync interval from config
         self.sync_interval = self.config.get('data', 'sync_interval')
+        
+        # Initialize ML prediction service (optional)
+        try:
+            self.ml_service = MLPredictionService(project_id, self.config)
+            self.logger.info("ML prediction service initialized")
+        except Exception as e:
+            self.logger.warning(f"ML prediction service not available: {e}")
+            self.ml_service = None
     
     def setup_first_run(self) -> None:
         """Set up initial sync settings for default users"""
@@ -210,10 +219,21 @@ class TransactionService:
             
             for user_id in user_ids:
                 user_ref = self.db.collection('users').document(user_id)
-                batch.update(user_ref, {
-                    'last_sync': now.isoformat(),
-                    'last_sync_status': 'success'
-                })
+                
+                # Get existing user data to preserve all fields
+                user_doc = user_ref.get()
+                if user_doc.exists:
+                    # Prepare update with all fields (existing + new)
+                    update_data = user_doc.to_dict()
+                    update_data['last_sync'] = now.isoformat()
+                    update_data['last_sync_status'] = 'success'
+                    batch.update(user_ref, update_data)
+                else:
+                    # If user doesn't exist, just update the sync fields
+                    batch.update(user_ref, {
+                        'last_sync': now.isoformat(),
+                        'last_sync_status': 'success'
+                    })
             
             batch.commit()
         except Exception as e:
@@ -254,7 +274,40 @@ class TransactionService:
             successful_transactions = 0
             failed_transactions = 0
             
-            for raw_transaction, message_id in raw_transactions_with_ids:
+            # Prepare all transactions for ML predictions
+            transactions_for_ml = []
+            transaction_indices = []
+            
+            for i, (raw_transaction, message_id) in enumerate(raw_transactions_with_ids):
+                # Add basic transaction data for ML
+                ml_data = {
+                    'vendor': raw_transaction.get('vendor', 'Unknown transaction'),
+                    'amount': raw_transaction.get('amount'),
+                    'date': raw_transaction.get('date'),
+                    'template_used': raw_transaction.get('template_used'),
+                    'account': raw_transaction.get('account'),
+                    'description': raw_transaction.get('vendor', 'Unknown transaction')
+                }
+                transactions_for_ml.append(ml_data)
+                transaction_indices.append(i)
+            
+            # Get ML predictions in batch if service is available
+            ml_predictions = []
+            if self.ml_service:
+                try:
+                    # Check if ML service is available before making predictions
+                    if self.ml_service.is_available():
+                        self.logger.info("Getting ML predictions for transactions")
+                        ml_predictions = self.ml_service.predict_categories(transactions_for_ml)
+                        self.logger.info(f"Received {len(ml_predictions)} ML predictions")
+                    else:
+                        self.logger.warning("ML service is not available (endpoint not ready)")
+                except Exception as e:
+                    self.logger.warning(f"ML prediction failed: {e}")
+                    self.logger.warning("Continuing without ML predictions")
+                    ml_predictions = []
+            
+            for i, (raw_transaction, message_id) in enumerate(raw_transactions_with_ids):
                 self.logger.info(f"Processing message ID: {message_id}")
                 # Add user info
                 raw_transaction['user_id'] = user_credentials['user_id']
@@ -308,9 +361,11 @@ class TransactionService:
                     'vendor_cleaned': None,  # Will be populated by DAO
                     'cleaned_metaphone': None,  # Will be populated by DAO
                     
-                    # Categorization fields (defaults)
+                    # Categorization fields (defaults or ML predictions)
                     'predicted_category': 'Uncategorized',
                     'predicted_subcategory': None,
+                    'prediction_confidence': 0.0,
+                    'model_version': None,
                     
                     # Status fields
                     'status': 'processed',
@@ -321,6 +376,16 @@ class TransactionService:
                     'month': None,
                     'year': None
                 }
+                
+                # Apply ML predictions if available
+                if ml_predictions and i < len(ml_predictions):
+                    ml_prediction = ml_predictions[i]
+                    if ml_prediction and ml_prediction.get('category') != 'Uncategorized':
+                        transaction_data['predicted_category'] = ml_prediction['category']
+                        transaction_data['predicted_subcategory'] = ml_prediction.get('subcategory')
+                        transaction_data['prediction_confidence'] = ml_prediction.get('confidence', 0.0)
+                        transaction_data['model_version'] = ml_prediction.get('model_version')
+                        self.logger.info(f"Applied ML prediction: {ml_prediction['category']} (confidence: {ml_prediction.get('confidence', 0.0)})")
                 
                 # Validate transaction
                 is_valid, errors = self.validator.validate_transaction(transaction_data)
@@ -340,8 +405,8 @@ class TransactionService:
                     model_data = transaction_data.copy()
                     fields_to_remove = [
                         'account', 'template_used', 'vendor_cleaned', 'cleaned_metaphone',
-                        'predicted_category', 'predicted_subcategory', 'day', 'day_name',
-                        'month', 'year'
+                        'predicted_category', 'predicted_subcategory', 'prediction_confidence',
+                        'model_version', 'day', 'day_name', 'month', 'year'
                     ]
                     for field in fields_to_remove:
                         model_data.pop(field, None)
@@ -357,6 +422,8 @@ class TransactionService:
                         'cleaned_metaphone': transaction_data['cleaned_metaphone'],
                         'predicted_category': transaction_data['predicted_category'],
                         'predicted_subcategory': transaction_data['predicted_subcategory'],
+                        'prediction_confidence': transaction_data.get('prediction_confidence', 0.0),
+                        'model_version': transaction_data.get('model_version'),
                         'day': transaction_data['day'],
                         'day_name': transaction_data['day_name'],
                         'month': transaction_data['month'],

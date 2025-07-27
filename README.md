@@ -14,6 +14,7 @@ A serverless application that automatically processes financial transaction emai
 - 🧪 Mock data generation for testing
 - 🆔 Email API ID tracking
 - ✨ Advanced template matching system
+- 🤖 ML-powered transaction categorization
 
 ## Documentation
 
@@ -41,7 +42,7 @@ A serverless application that automatically processes financial transaction emai
    cp config.yaml.example config.yaml
    # Edit config.yaml with your settings
 
-   # Run setup script (Windows)
+   # Deploy backend (Windows)
    scripts/setup.bat
    # OR for Unix/Linux
    chmod +x scripts/setup.sh
@@ -81,6 +82,44 @@ python src/main.py
 ```
 
 > **Note**: Most tests use mock credentials and can run without any additional setup. Only Gmail API integration tests require real credentials configured in config.yaml. The mock data generation script requires a valid email address from your config.yaml to generate realistic test data.
+
+## ML Model Management
+
+**Important**: Activate your virtual environment before working with Python model script files.
+
+### Model Training and Deployment
+
+```bash
+# Train model based on parquet data deployed to GCP bucket and publish to GCP
+python scripts/ml_training_workflow.py --project-id shanedancy-9f2a3 --train-only
+
+# Test a specific joblib model locally
+python scripts/ml_training_workflow.py --project-id shanedancy-9f2a3 --train-only
+```
+
+### Model Testing
+
+```bash
+# Test the model using GCP endpoint (falls back to local joblib version)
+scripts/test_endpoint.bat
+
+# Test to confirm the joblib version of the model is loaded correctly as a pipeline
+python scripts/test_model_ck_gcp.py
+```
+
+### Data Preparation
+
+```bash
+# Prepare ML training data based on start/end dates (currently set to >= 2024-01-01 for default users)
+scripts/prepare_ml_data_2024.bat
+```
+
+### Backend Deployment
+
+```bash
+# Deploy the full backend
+scripts/setup.bat
+```
 
 ## Support and Troubleshooting
 

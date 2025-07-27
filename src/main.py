@@ -1,5 +1,6 @@
 from flask import Flask
 from src.api.routes import register_routes
+from src.api.ml_routes import ml_bp, init_services
 from src.utils.config import Config
 from src.utils.credentials_manager import CredentialsManager
 import os
@@ -17,7 +18,15 @@ def create_app():
     # Initialize credentials manager
     app.cred_manager = CredentialsManager(app.config['PROJECT_ID'])
     
+    # Register routes
     register_routes(app)
+    
+    # Register ML routes
+    app.register_blueprint(ml_bp)
+    
+    # Initialize ML services
+    init_services(app.config['PROJECT_ID'])
+    
     return app
 
 def main():

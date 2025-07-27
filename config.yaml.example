@@ -13,6 +13,9 @@ features:
     scheduler: true     # Cloud Scheduler API and jobs
     firestore: true     # Firestore API
     secrets: true       # Secret Manager API and secrets
+    bigquery: true      # BigQuery API for ML data warehouse
+    ml: true            # Machine Learning features (Vertex AI, etc.)
+    aiplatform: true    # Vertex AI API for model training/deployment
 
 gcp:
   project_id: %PROJECT_ID%
@@ -95,6 +98,7 @@ cloud_function:
   name: transaction-processor
   runtime: python310
   timeout: 540  # seconds
+  memory: 512  # MB - configurable memory for transaction processor
   entry_point: process_transactions
   source_path: "gs://%PROJECT_ID%-functions/function-code.zip"
   environment_variables:
@@ -116,6 +120,50 @@ cloud_function:
     - .tox/
     - docs/
     - notebooks/
+
+# Data Export Function for ML Pipeline
+data_export_function:
+  name: data-export-function
+  runtime: python310
+  timeout: 540  # 9 minutes
+  entry_point: export_training_data
+  source_path: "gs://%PROJECT_ID%-functions/data-export-function.zip"
+  memory: 512  # MB
+  schedule: "0 2 * * 0"  # Weekly on Sunday at 2 AM
+  environment_variables:
+    PROJECT_ID: "%PROJECT_ID%"
+    GOOGLE_CLOUD_PROJECT: "%PROJECT_ID%"
+    LOG_LEVEL: "INFO"
+
+# Model Retraining Function
+model_retraining_function:
+  name: model-retraining-function
+  runtime: python310
+  timeout: 540  # 9 minutes for training
+  entry_point: trigger_model_retraining
+  source_path: "gs://%PROJECT_ID%-functions/model-retraining-function.zip"
+  memory: 2048  # MB
+  schedule: "0 2 * * 0"  # Weekly at 2 AM on Sundays
+  environment_variables:
+    PROJECT_ID: "%PROJECT_ID%"
+    GOOGLE_CLOUD_PROJECT: "%PROJECT_ID%"
+    LOG_LEVEL: "INFO"
+    MIN_FEEDBACK_COUNT: "5"
+    DAYS_LOOKBACK: "14"
+
+# Model Performance Checker Function
+model_performance_checker:
+  name: model-performance-checker
+  runtime: python310
+  timeout: 60
+  entry_point: check_model_performance
+  source_path: "gs://%PROJECT_ID%-functions/model-performance-checker.zip"
+  memory: 512  # MB
+  schedule: "0 2 * * 1" #Every Monday # "0 */6 * * *"  # Every 6 hours
+  environment_variables:
+    PROJECT_ID: "%PROJECT_ID%"
+    GOOGLE_CLOUD_PROJECT: "%PROJECT_ID%"
+    LOG_LEVEL: "INFO"
 
 auth:
   # Gmail IMAP settings
@@ -149,11 +197,13 @@ testing:
   test_order:  # Defines the logical order of test execution
     - unit_tests  # Run unit tests before deployment
     - package_tests  # Run package tests before deployment
+    - ml_tests  # Run ML tests before deployment (if ML enabled)
   components:  # Which components to test
     unit_tests: true  # Run unit tests
     package_tests: true  # Run package tests
     config_tests: false  # Skip config tests
     integration_tests: false  # Skip integration tests
+    ml_tests: true  # Run ML tests (only if ML is enabled)
     function: true  # Test deployed function
     scheduler: false  # Skip scheduler tests
     pubsub: false  # Skip pub/sub tests
@@ -165,5 +215,7 @@ testing:
       - tests/test_transaction_parse.py
     package_tests:  # Package tests to run before deployment
       - scripts/test_deployment_package.py
+    ml_tests:  # ML tests to run before deployment
+      - scripts/test_trained_models_locally.py
     post_deployment:  # Tests to run after deployment
       - scripts/test_function.py 

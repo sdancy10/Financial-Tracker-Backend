@@ -1,6 +1,6 @@
 from flask import request, jsonify
 from src.utils.transaction_dao import TransactionDAO
-from src.services.transaction_trainer import TransactionModelTrainer
+from src.models.transaction_trainer import TransactionModelTrainer
 from src.utils.config import Config
 from google.cloud import secretmanager
 

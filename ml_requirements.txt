@@ -1,0 +1,43 @@
+# ML-specific requirements for financial tracker
+# This file contains all dependencies needed for ML functionality
+#
+# This file is used by:
+# 1. setup.bat - to install ML packages when ML features are enabled
+# 2. deploy_ml_functions.py - to create requirements.txt for Cloud Functions
+#
+# Note: These packages are also listed in requirements.txt for development,
+# but this file ensures Cloud Functions have the exact versions needed.
+
+# Core ML libraries
+scikit-learn==1.3.1
+pandas>=1.5.0
+numpy>=1.21.0
+joblib==1.3.2
+scipy>=1.9.0
+
+# Google Cloud ML services
+google-cloud-aiplatform>=1.25.0
+google-cloud-bigquery>=3.0.0
+google-cloud-bigquery-storage>=2.13.0
+pandas-gbq>=0.17.0
+pyarrow>=8.0.0
+
+# Custom Prediction Routine dependencies
+fastapi>=0.100.0
+uvicorn>=0.20.0
+
+# Feature engineering
+metaphone>=0.6
+
+# ML monitoring and tracking
+google-cloud-monitoring>=2.11.0
+google-cloud-monitoring-dashboards>=1.6.0
+
+# Data processing
+cachetools>=5.2.0
+
+# Cloud Functions framework (for ML functions)
+functions-framework>=3.0.0
+
+# Additional utilities
+pyyaml>=6.0 

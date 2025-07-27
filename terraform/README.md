@@ -37,7 +37,7 @@ features:
 1. **Cloud Functions**
    - Name: `transaction-processor`
    - Runtime: Python 3.10
-   - Memory: 256MB
+   - Memory: Configurable via config.yaml (default: 512MB)
    - Timeout: 540s
    - Source: Uploaded from local directory
 

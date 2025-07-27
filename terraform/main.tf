@@ -64,6 +64,7 @@ resource "google_storage_bucket" "ml_artifacts_bucket" {
   name     = local.storage.buckets.ml_artifacts
   location = local.resource_config.storage.location
   uniform_bucket_level_access = true
+  
 }
 
 resource "google_storage_bucket" "functions_bucket" {
@@ -72,6 +73,231 @@ resource "google_storage_bucket" "functions_bucket" {
   name     = local.storage.buckets.functions
   location = local.resource_config.storage.location
   uniform_bucket_level_access = true
+}
+# IAM for user to view/download objects in ML artifacts bucket
+resource "google_storage_bucket_iam_member" "ml_artifacts_user_viewer" {
+  count = local.enabled_services.storage ? 1 : 0  # Only create if storage is enabled
+  
+  bucket = google_storage_bucket.ml_artifacts_bucket[0].name
+  role   = "roles/storage.objectViewer"  # Grants storage.objects.get (download/read access)
+  member = "user:sdancy.10@gmail.com"    # Your personal account
+}
+
+# ML Data Storage Bucket for Parquet files
+resource "google_storage_bucket" "ml_data_bucket" {
+  count = local.enabled_services.storage ? 1 : 0
+  
+  name     = "${local.project_id}-ml-data"
+  location = local.resource_config.storage.location
+  uniform_bucket_level_access = true
+  force_destroy = true
+  
+  lifecycle_rule {
+    condition {
+      age = 90  # Delete files older than 90 days
+    }
+    action {
+      type = "Delete"
+    }
+  }
+}
+
+# BigQuery Dataset for ML Training Data
+resource "google_bigquery_dataset" "transactions" {
+  count = try(local.enabled_services.bigquery, true) ? 1 : 0
+  
+  dataset_id = "${replace(local.project_id, "-", "_")}_transactions"
+  location   = "US"
+  description = "Transaction data for ML training"
+
+  delete_contents_on_destroy = true
+}
+
+# BigQuery Table for ML Feedback
+resource "google_bigquery_table" "ml_feedback" {
+  count = local.enabled_services.bigquery ? 1 : 0
+  
+  dataset_id = google_bigquery_dataset.transactions[0].dataset_id
+  table_id   = "ml_feedback"
+  
+  schema = jsonencode([
+    {
+      name = "feedback_id"
+      type = "STRING"
+      mode = "REQUIRED"
+    },
+    {
+      name = "transaction_id"
+      type = "STRING"
+      mode = "REQUIRED"
+    },
+    {
+      name = "user_id"
+      type = "STRING"
+      mode = "REQUIRED"
+    },
+    {
+      name = "original_category"
+      type = "STRING"
+      mode = "NULLABLE"
+    },
+    {
+      name = "original_subcategory"
+      type = "STRING"
+      mode = "NULLABLE"
+    },
+    {
+      name = "user_category"
+      type = "STRING"
+      mode = "REQUIRED"
+    },
+    {
+      name = "user_subcategory"
+      type = "STRING"
+      mode = "NULLABLE"
+    },
+    {
+      name = "prediction_confidence"
+      type = "FLOAT64"
+      mode = "NULLABLE"
+    },
+    {
+      name = "model_version"
+      type = "STRING"
+      mode = "NULLABLE"
+    },
+    {
+      name = "vendor"
+      type = "STRING"
+      mode = "NULLABLE"
+    },
+    {
+      name = "vendor_cleaned"
+      type = "STRING"
+      mode = "NULLABLE"
+    },
+    {
+      name = "amount"
+      type = "FLOAT64"
+      mode = "NULLABLE"
+    },
+    {
+      name = "template_used"
+      type = "STRING"
+      mode = "NULLABLE"
+    },
+    {
+      name = "feedback_timestamp"
+      type = "TIMESTAMP"
+      mode = "REQUIRED"
+    },
+    {
+      name = "transaction_date"
+      type = "TIMESTAMP"
+      mode = "NULLABLE"
+    }
+  ])
+}
+
+# Cloud Function for Model Retraining
+resource "google_cloudfunctions_function" "model_retraining" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  
+  name        = "model-retraining-function"
+  runtime     = "python310"
+  region      = local.region
+  
+  source_archive_bucket = google_storage_bucket.functions_bucket[0].name
+  source_archive_object = "model-retraining-function.zip"
+  
+  depends_on = [google_storage_bucket.functions_bucket]
+  
+  entry_point = "trigger_model_retraining"
+  timeout     = 540
+  available_memory_mb = 2048
+  
+  event_trigger {
+    event_type = "providers/cloud.pubsub/eventTypes/topic.publish"
+    resource   = google_pubsub_topic.model_retraining[0].name
+  }
+  
+  environment_variables = {
+    PROJECT_ID = local.project_id
+    GOOGLE_CLOUD_PROJECT = local.project_id
+    LOG_LEVEL = "INFO"
+  }
+  
+  service_account_email = local.service_accounts.app_engine
+}
+
+# Pub/Sub Topic for Model Retraining
+resource "google_pubsub_topic" "model_retraining" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  name = "model-retraining-trigger"
+}
+
+# Cloud Scheduler for Model Retraining
+resource "google_cloud_scheduler_job" "model_retraining_scheduler" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  
+  name        = "model-retraining-weekly"
+  region      = local.region
+  schedule    = "0 2 * * 0"  # Weekly at 2 AM on Sundays
+  time_zone   = "America/New_York"
+  
+  pubsub_target {
+    topic_name = google_pubsub_topic.model_retraining[0].id
+    data = base64encode(jsonencode({
+      min_feedback_count = 100
+      days_lookback = 7
+    }))
+  }
+}
+
+# Cloud Function for Model Performance Monitoring
+resource "google_cloudfunctions_function" "model_performance_checker" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  
+  name        = "model-performance-checker"
+  runtime     = "python310"
+  region      = local.region
+  
+  source_archive_bucket = google_storage_bucket.functions_bucket[0].name
+  source_archive_object = "model-performance-checker.zip"
+  
+  depends_on = [google_storage_bucket.functions_bucket]
+  
+  entry_point = "check_model_performance"
+  timeout     = 60
+  available_memory_mb = 512
+  
+  trigger_http = true
+  
+  environment_variables = {
+    PROJECT_ID = local.project_id
+    GOOGLE_CLOUD_PROJECT = local.project_id
+    LOG_LEVEL = "INFO"
+  }
+  
+  service_account_email = local.service_accounts.app_engine
+}
+
+# Cloud Scheduler for Performance Monitoring
+resource "google_cloud_scheduler_job" "performance_monitor_scheduler" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  
+  name        = "model-performance-monitor"
+  region      = local.region
+  schedule    = "0 */6 * * *"  # Every 6 hours
+  time_zone   = "America/New_York"
+  
+  http_target {
+    uri = google_cloudfunctions_function.model_performance_checker[0].https_trigger_url
+    http_method = "GET"
+    oidc_token {
+      service_account_email = local.service_accounts.app_engine
+    }
+  }
 }
 
 # Pub/Sub topic for transaction processing
@@ -107,8 +333,74 @@ resource "google_cloudfunctions_function" "transaction_processor" {
     "LOG_LEVEL"            = "INFO"  # Set to DEBUG for verbose logging
   }
 
+  service_account_email = local.service_accounts.app_engine
+
   depends_on = [
     google_project_service.required_apis
+  ]
+}
+
+# Data Export Function for ML Pipeline
+resource "google_cloudfunctions_function" "data_export_function" {
+  count = local.enabled_services.cloud_functions ? 1 : 0
+  
+  name        = "data-export-function"
+  description = "Exports transaction data to BigQuery and Parquet for ML training"
+  runtime     = "python310"
+  region      = local.region
+
+  available_memory_mb   = 512
+  source_archive_bucket = google_storage_bucket.functions_bucket[0].name
+  source_archive_object = "data-export-function.zip"
+  entry_point          = "export_training_data_http"
+  timeout             = 540
+
+  trigger_http = true
+  https_trigger_security_level = "SECURE_ALWAYS"
+
+  environment_variables = {
+    "PROJECT_ID"           = local.project_id
+    "GOOGLE_CLOUD_PROJECT" = local.project_id
+    "LOG_LEVEL"            = "INFO"
+  }
+
+  service_account_email = local.service_accounts.app_engine
+
+  depends_on = [
+    google_storage_bucket.functions_bucket,
+    google_project_service.required_apis,
+    google_bigquery_dataset.transactions,
+    google_storage_bucket.ml_data_bucket
+  ]
+}
+
+# Cloud Scheduler job for data export
+resource "google_cloud_scheduler_job" "data_export_scheduler" {
+  count = local.enabled_services.scheduler ? 1 : 0
+  
+  name             = "data-export-scheduler"
+  description      = "Triggers weekly data export for ML training"
+  schedule         = "0 2 * * 0"  # Weekly on Sunday at 2 AM
+  time_zone        = "America/New_York"
+
+  retry_config {
+    retry_count = 3
+    min_backoff_duration = "60s"
+  }
+
+  http_target {
+    uri = google_cloudfunctions_function.data_export_function[0].https_trigger_url
+    http_method = "POST"
+    headers = {
+      "Content-Type" = "application/json"
+    }
+    body = base64encode(jsonencode({
+      action = "export_all"
+    }))
+  }
+
+  depends_on = [
+    google_cloudfunctions_function.data_export_function
   ]
 }
 
@@ -275,6 +567,36 @@ output "functions_bucket" {
   description = "Name of the functions storage bucket"
 }
 
+output "data_export_function_url" {
+  value = local.enabled_services.cloud_functions ? google_cloudfunctions_function.data_export_function[0].https_trigger_url : null
+  description = "URL of the data export function"
+}
+
+output "ml_data_bucket" {
+  value = local.enabled_services.storage ? google_storage_bucket.ml_data_bucket[0].name : null
+  description = "Name of the ML data bucket for Parquet files"
+}
+
+output "bigquery_dataset" {
+  value = local.enabled_services.bigquery ? google_bigquery_dataset.transactions[0].dataset_id : null
+  description = "BigQuery dataset ID for transactions"
+}
+
+output "model_retraining_function" {
+  value = local.enabled_services.cloud_functions ? google_cloudfunctions_function.model_retraining[0].name : null
+  description = "Model retraining Cloud Function name"
+}
+
+output "model_performance_checker_url" {
+  value = local.enabled_services.cloud_functions ? google_cloudfunctions_function.model_performance_checker[0].https_trigger_url : null
+  description = "Model performance checker HTTP endpoint"
+}
+
+output "ml_feedback_table" {
+  value = local.enabled_services.bigquery ? google_bigquery_table.ml_feedback[0].table_id : null
+  description = "BigQuery table for ML feedback data"
+}
+
 # Secret for Cloud Build service account
 resource "google_secret_manager_secret" "cloud_build_sa_key" {
   count = local.enabled_services.cloud_build ? 1 : 0
@@ -395,6 +717,69 @@ resource "google_project_iam_member" "function_pubsub_publisher" {
   
   project = local.project_id
   role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for Cloud Function to access Vertex AI (for ML predictions)
+resource "google_project_iam_member" "function_aiplatform_user" {
+  count = local.enabled_services.cloud_functions && local.enabled_services.aiplatform ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for Cloud Function to access Vertex AI Model Registry
+resource "google_project_iam_member" "function_aiplatform_model_user" {
+  count = local.enabled_services.cloud_functions && local.enabled_services.aiplatform ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/aiplatform.modelUser"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for Cloud Function to access Vertex AI Endpoints
+resource "google_project_iam_member" "function_aiplatform_endpoint_user" {
+  count = local.enabled_services.cloud_functions && local.enabled_services.aiplatform ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/aiplatform.endpointUser"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for Cloud Function to access BigQuery (for ML data operations)
+resource "google_project_iam_member" "function_bigquery_user" {
+  count = local.enabled_services.cloud_functions && local.enabled_services.bigquery ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/bigquery.user"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for Cloud Function to access BigQuery Data Editor (for writing feedback)
+resource "google_project_iam_member" "function_bigquery_data_editor" {
+  count = local.enabled_services.cloud_functions && local.enabled_services.bigquery ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for Cloud Function to access Cloud Storage (for ML artifacts)
+resource "google_project_iam_member" "function_storage_object_viewer" {
+  count = local.enabled_services.cloud_functions && local.enabled_services.storage ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/storage.objectViewer"
+  member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
+}
+
+# IAM binding for Cloud Function to write to Cloud Storage (for ML artifacts)
+resource "google_project_iam_member" "function_storage_object_creator" {
+  count = local.enabled_services.cloud_functions && local.enabled_services.storage ? 1 : 0
+  
+  project = local.project_id
+  role    = "roles/storage.objectCreator"
   member  = "serviceAccount:${local.project_id}@appspot.gserviceaccount.com"
 }
 

@@ -67,7 +67,9 @@ locals {
     "firestore.googleapis.com": local.enabled_services.firestore,
     "secretmanager.googleapis.com": local.enabled_services.secrets,
     "cloudscheduler.googleapis.com": local.enabled_services.scheduler,
-    "aiplatform.googleapis.com": true
+    "aiplatform.googleapis.com": true,
+    "bigquery.googleapis.com": true,
+    "monitoring.googleapis.com": true
   }
 
   # Filter to only enabled APIs (keeping existing logic)
@@ -84,7 +86,7 @@ locals {
       schedule  = "0 */12 * * *"
       retries   = 1
     } : {
-      memory    = 256
+      memory    = try(local.cloud_function.memory, 256)  # Use config.yaml memory or default to 256
       timeout   = local.cloud_function.timeout
       schedule  = local.scheduler.transaction_sync.schedule
       retries   = local.scheduler.transaction_sync.retry_count

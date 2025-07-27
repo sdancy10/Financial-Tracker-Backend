@@ -287,19 +287,86 @@ class TransactionDAO:
             print(f"Error retrieving categories: {str(e)}")
             return []
     
-    def update_transaction_category(self, transaction_id: str, user_id: str, 
-                                  new_category: str, old_category: Optional[str] = None) -> bool:
-        """Update transaction category and maintain category index"""
+    def update_transaction_category(self, 
+                                  transaction_id: str, 
+                                  user_id: str, 
+                                  new_category: str, 
+                                  new_subcategory: Optional[str] = None,
+                                  new_vendor: Optional[str] = None,
+                                  old_category: Optional[str] = None, 
+                                  old_subcategory: Optional[str] = None) -> bool:
+        """Update transaction category, subcategory, and optionally vendor"""
         try:
-            batch = self.db.batch()
-            
-            # Update transaction
+            # Get current transaction data for feedback
             transaction_ref = self.db.collection('users').document(user_id)\
                                 .collection('transactions').document(transaction_id)
-            batch.update(transaction_ref, {
-                'predicted_category': new_category,
+            transaction_doc = transaction_ref.get()
+            
+            if not transaction_doc.exists:
+                self.logger.error(f"Transaction {transaction_id} not found")
+                return False
+            
+            transaction_data = transaction_doc.to_dict()
+            
+            # Get original prediction info
+            original_category = old_category or transaction_data.get('predicted_category')
+            original_subcategory = old_subcategory or transaction_data.get('predicted_subcategory')
+            model_version = transaction_data.get('model_version')
+            prediction_confidence = transaction_data.get('prediction_confidence')
+            
+            # Start batch update
+            batch = self.db.batch()
+            
+            # Prepare update data with ALL existing fields to be extra safe
+            # We pass all fields to update() as a defensive measure, even though
+            # Firestore will only write changed fields. This ensures we never
+            # accidentally lose data if Firestore's behavior changes.
+            update_data = {
+                # Preserve all existing fields
+                'id': transaction_data.get('id'),
+                'id_api': transaction_data.get('id_api'),
+                'amount': transaction_data.get('amount'),
+                'vendor': transaction_data.get('vendor'),
+                'vendor_cleaned': transaction_data.get('vendor_cleaned'),
+                'account': transaction_data.get('account'),
+                'template_used': transaction_data.get('template_used'),
+                'cleaned_metaphone': transaction_data.get('cleaned_metaphone'),
+                'date': transaction_data.get('date'),
+                'description': transaction_data.get('description'),
+                'account_id': transaction_data.get('account_id'),
+                'user_id': transaction_data.get('user_id'),
+                'status': transaction_data.get('status'),
+                'created_at': transaction_data.get('created_at'),
+                'day': transaction_data.get('day'),
+                'day_name': transaction_data.get('day_name'),
+                'month': transaction_data.get('month'),
+                'year': transaction_data.get('year'),
+                
+                # Preserve ML-related fields
+                'model_version': transaction_data.get('model_version'),
+                'prediction_confidence': transaction_data.get('prediction_confidence'),
+                
+                # Preserve predicted categories
+                'predicted_category': transaction_data.get('predicted_category'),
+                'predicted_subcategory': transaction_data.get('predicted_subcategory'),
+                
+                # Update user category fields (user corrections)
+                'user_category': new_category,
+                'user_subcategory': new_subcategory,
+                
+                # Update user vendor if provided
+                'user_vendor': new_vendor if new_vendor is not None else transaction_data.get('user_vendor'),
+                
+                # Mark as user corrected
+                'user_corrected': True,
                 'last_modified': firestore.SERVER_TIMESTAMP
-            })
+            }
+            
+            # Remove None values to avoid clearing fields
+            update_data = {k: v for k, v in update_data.items() if v is not None}
+            
+            # Use update() for efficiency - Firestore will only write changed fields
+            batch.update(transaction_ref, update_data)
             
             # Update category stats
             new_category_ref = self.db.collection('users').document(user_id)\
@@ -309,17 +376,41 @@ class TransactionDAO:
                 'transaction_count': firestore.Increment(1)
             }, merge=True)
             
-            if old_category:
+            if original_category and original_category != new_category:
                 old_category_ref = self.db.collection('users').document(user_id)\
-                                    .collection('categories').document(old_category)
+                                    .collection('categories').document(original_category)
                 batch.set(old_category_ref, {
                     'transaction_count': firestore.Increment(-1)
                 }, merge=True)
             
+            # Commit the batch
             batch.commit()
+            
+            # Record ML feedback if this was an ML prediction
+            if model_version and original_category != new_category:
+                try:
+                    from src.services.ml_feedback_service import MLFeedbackService
+                    feedback_service = MLFeedbackService(self.db.project)
+                    
+                    feedback_service.record_feedback(
+                        transaction_id=transaction_id,
+                        user_id=user_id,
+                        transaction_data=transaction_data,
+                        original_category=original_category,
+                        original_subcategory=original_subcategory,
+                        user_category=new_category,
+                        user_subcategory=new_subcategory,
+                        model_version=model_version,
+                        prediction_confidence=prediction_confidence
+                    )
+                except Exception as e:
+                    # Don't fail the update if feedback recording fails
+                    self.logger.warning(f"Could not record ML feedback: {e}")
+            
             return True
+            
         except Exception as e:
-            print(f"Error updating transaction category: {str(e)}")
+            self.logger.error(f"Error updating transaction category: {str(e)}")
             return False
     
     def get_transaction(self, transaction_id: str, user_id: str) -> Optional[Dict[str, Any]]:

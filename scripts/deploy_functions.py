@@ -50,6 +50,7 @@ class FunctionDeployer:
         self.runtime = self.function_config.get('runtime', 'python310')
         self.entry_point = self.function_config.get('entry_point', 'process_transactions')
         self.timeout = self.function_config.get('timeout', 540)  # Default to 540 seconds (9 minutes)
+        self.memory = self.function_config.get('memory', 256)  # Default to 256 MB
         
         # Get storage config
         storage_config = self.config.get('storage')
@@ -128,13 +129,20 @@ class FunctionDeployer:
             'src.utils.validation': 'utils_validation',
             'src.utils.transaction_parser': 'utils_transaction_parser',
             'src.utils.auth_util': 'utils_auth_util',
-            'src.utils.data_sync': 'utils_data_sync',
             'src.models.transaction': 'models_transaction',
+            'src.models.transaction_trainer': 'models_transaction_trainer',
             'src.services.transaction_service': 'services_transaction_service',
             'src.services.transaction_processor': 'services_transaction_processor',
-            'src.services.transaction_trainer': 'services_transaction_trainer',
             'src.services.transaction_scheduler': 'services_transaction_scheduler',
-            'src.api.routes': 'api_routes'
+            'src.services.data_export_service': 'services_data_export_service',
+            'src.services.data_export_function': 'services_data_export_function',
+            'src.services.feature_engineering': 'services_feature_engineering',
+            'src.services.ml_prediction_service': 'services_ml_prediction_service',
+            'src.services.ml_feedback_service': 'services_ml_feedback_service',
+            'src.services.model_retraining_function': 'services_model_retraining_function',
+            'src.services.model_monitoring_service': 'services_model_monitoring_service',
+            'src.api.routes': 'api_routes',
+            'src.api.ml_routes': 'api_ml_routes'
         })
         
         # Add Terraform state checking
@@ -518,6 +526,7 @@ class FunctionDeployer:
                 'source_archive_url': f'gs://{self.source_bucket}/{self.source_object}',
                 'entry_point': self.entry_point,
                 'runtime': self.runtime,
+                'available_memory_mb': self.memory,  # Set memory from config
                 'environment_variables': {
                     'GOOGLE_CLOUD_PROJECT': self.project_id,
                     'CONFIG_PATH': 'config.yaml',

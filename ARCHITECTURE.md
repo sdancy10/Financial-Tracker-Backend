@@ -118,7 +118,7 @@ sequenceDiagram
 - **Scope**: Last 24 hours of emails
 - **Specifications**:
   - Runtime: Python 3.10
-  - Memory: 256MB
+  - Memory: Configurable via config.yaml (default: 512MB)
   - Timeout: 540s (9 minutes)
 
 ### Storage Systems
