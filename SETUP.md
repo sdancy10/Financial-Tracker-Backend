@@ -95,14 +95,18 @@ See [CREDENTIAL_MANAGEMENT.md](CREDENTIAL_MANAGEMENT.md) for detailed instructio
      service_account_key_path: "credentials/service-account-key.json"
 
    features:
-     enabled_services:
-       cloud_run: false      # Cloud Run API and services
-       cloud_functions: true # Cloud Functions API and services
-       storage: true        # Cloud Storage API and buckets
-       pubsub: true        # Pub/Sub API and topics
-       scheduler: true     # Cloud Scheduler API and jobs
-       firestore: true     # Firestore API
-       secrets: true       # Secret Manager API and secrets
+      enabled_services:
+         cloud_api: false      # Cloud Run API and services
+         cloud_functions: true # Cloud Functions API and services
+         cloud_build: true    # Cloud Build API and triggers
+         storage: true        # Cloud Storage API and buckets
+         pubsub: true        # Pub/Sub API and topics
+         scheduler: true     # Cloud Scheduler API and jobs
+         firestore: true     # Firestore API
+         secrets: true       # Secret Manager API and secrets
+         bigquery: true      # BigQuery API for ML data warehouse
+         ml: true            # Machine Learning features (Vertex AI, etc.)
+         aiplatform: true    # Vertex AI API for model training/deployment
    ```
 
 ## Project Setup

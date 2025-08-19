@@ -138,6 +138,14 @@ ml:
 
 - To use Vertex AI endpoint instead, set `mode: vertex_ai`.
 
+- URL resolution (no manual URL needed): If `function_url` is omitted or empty, the service will automatically:
+  - use env `ML_INFERENCE_FUNCTION_URL` if set; otherwise
+  - construct the default URL `https://{REGION}-{PROJECT}.cloudfunctions.net/{FUNCTION_NAME}` using:
+    - `REGION` (env or `project.region` in `config.yaml`),
+    - `GOOGLE_CLOUD_PROJECT` (env) or `project.id`,
+    - `FUNCTION_NAME` from `ml.inference.function_name` (default `ml-inference-function`) or env `ML_INFERENCE_FUNCTION_NAME`.
+  - The provided `function_url` in `config.yaml` still takes precedence when non-empty.
+
 
 ## Support and Troubleshooting
 
