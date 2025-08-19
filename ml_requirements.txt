@@ -14,6 +14,7 @@ pandas>=1.5.0
 numpy>=1.21.0
 joblib==1.3.2
 scipy>=1.9.0
+nltk>=3.8.0
 
 # Google Cloud ML services
 google-cloud-aiplatform>=1.25.0

@@ -69,6 +69,20 @@ class MLFunctionDeployer:
                 ]
             },
             {
+                'name': 'ml-inference-function',
+                'source_file': 'src/services/ml_inference_function.py',
+                'entry_point': 'predict_categories_http',
+                'trigger_type': 'http',
+                'dependencies': [
+                    'src/services/feature_engineering.py',
+                    'src/models/transaction_trainer.py',
+                    'src/utils/config.py',
+                    'src/services/__init__.py',
+                    'src/models/__init__.py',
+                    'src/utils/__init__.py'
+                ]
+            },
+            {
                 'name': 'model-retraining-function',
                 'source_file': 'src/services/model_retraining_function.py',
                 'entry_point': 'trigger_model_retraining',

@@ -291,15 +291,16 @@ class TransactionModelTrainer:
         
         return pipeline
 
-    def train_and_deploy_model(self, model_display_name: str, use_cloud_training: bool = False) -> tuple:
-        """Train and deploy model using Vertex AI with Parquet data
+    def train_and_deploy_model(self, model_display_name: str, use_cloud_training: bool = False, deploy_target: str = "cloud_function") -> tuple:
+        """Train and deploy model artifacts.
         
         Args:
             model_display_name: Display name for the model
             use_cloud_training: If True, uses Vertex AI training. If False (default), trains locally.
+            deploy_target: 'cloud_function' (default) to save artifacts only, or 'vertex_ai' to upload and deploy.
             
         Returns:
-            Tuple of (Model, Endpoint)
+            Tuple of (Model, Endpoint) for vertex_ai target; (None, None) for cloud_function target.
         """
         self.logger.info(f"Training model: {model_display_name} (cloud training: {use_cloud_training})")
         
@@ -381,27 +382,30 @@ class TransactionModelTrainer:
                     # On Windows, sometimes the file is still locked
                     self.logger.warning(f"Could not delete temporary file {tmp_file_path}, will be cleaned up by OS")
         
-        # Upload to Model Registry
-        # Use sklearn 1.3 container to match our training environment
-        model = aiplatform.Model.upload(
-            display_name=model_display_name,
-            artifact_uri=f"gs://{self.bucket_name}/models/{model_display_name}",
-            serving_container_image_uri="us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest",
-            serving_container_environment_variables={
-                "SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE": "True"
-            }
-        )
+        if deploy_target == "vertex_ai":
+            # Upload to Model Registry and deploy an endpoint
+            model = aiplatform.Model.upload(
+                display_name=model_display_name,
+                artifact_uri=f"gs://{self.bucket_name}/models/{model_display_name}",
+                serving_container_image_uri="us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest",
+                serving_container_environment_variables={
+                    "SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE": "True"
+                }
+            )
 
-        # Deploy model to endpoint
-        endpoint = model.deploy(
-            machine_type=machine_types['inference'],
-            min_replica_count=1,
-            max_replica_count=1,  # Reduced to 1 for cost savings
-            accelerator_type=None,
-            accelerator_count=None
-        )
+            endpoint = model.deploy(
+                machine_type=machine_types['inference'],
+                min_replica_count=1,
+                max_replica_count=1,
+                accelerator_type=None,
+                accelerator_count=None
+            )
 
-        self.logger.info(f"Model deployed to endpoint: {endpoint.resource_name}")
-        return model, endpoint
+            self.logger.info(f"Model deployed to endpoint: {endpoint.resource_name}")
+            return model, endpoint
+        else:
+            # Cloud Function target: artifacts saved; deployment handled by separate CF
+            self.logger.info("Artifacts saved; skip Vertex AI deployment (cloud_function target)")
+            return None, None
 
 

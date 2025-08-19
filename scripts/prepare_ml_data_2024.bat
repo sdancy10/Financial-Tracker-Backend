@@ -20,7 +20,8 @@ python scripts/prepare_ml_training_data.py ^
     --project-id shanedancy-9f2a3 ^
     --source firestore ^
     --user-ids 5oZfUgtSn0g1VaEa6VNpHVC51Zq2 aDer8RS94NPmPdAYGHQQpI3iWm13 ^
-    --start-date 2024-01-01
+    --start-date 2018-01-01 ^
+    --end-date 2024-01-01
 
 echo.
 echo ================================

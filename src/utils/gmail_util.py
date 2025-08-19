@@ -65,15 +65,19 @@ class GmailUtil:
                 msg['gmail_id'] = gmail_id
                 msg['message_id'] = message_id
                 
-                # Parse transaction from email
-                transaction = self.parser.parse_gmail_message(msg)
-                
-                # Only include successfully parsed transactions
-                if transaction:
-                    self.logger.info(f"Successfully parsed message {gmail_id}")
-                    results.append((transaction, gmail_id))
-                else:
-                    self.logger.warning(f"Failed to parse message {gmail_id}")
+                # Parse transaction from email with per-message error isolation
+                try:
+                    transaction = self.parser.parse_gmail_message(msg)
+                    # Only include successfully parsed transactions
+                    if transaction:
+                        self.logger.info(f"Successfully parsed message {gmail_id}")
+                        results.append((transaction, gmail_id))
+                    else:
+                        self.logger.warning(f"No transaction parsed for message {gmail_id} (skipping)")
+                except Exception as parse_err:
+                    # Do not abort batch; log and continue to next message
+                    self.logger.warning(f"Parse error for message {gmail_id}: {parse_err}")
+                    continue
             
             return results
             

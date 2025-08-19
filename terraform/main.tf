@@ -282,6 +282,34 @@ resource "google_cloudfunctions_function" "model_performance_checker" {
   service_account_email = local.service_accounts.app_engine
 }
 
+# Cloud Function for ML Inference (HTTP)
+resource "google_cloudfunctions_function" "ml_inference_function" {
+  count       = local.enabled_services.cloud_functions ? 1 : 0
+  name        = "ml-inference-function"
+  runtime     = "python310"
+  region      = local.region
+
+  source_archive_bucket = google_storage_bucket.functions_bucket[0].name
+  source_archive_object = "ml-inference-function.zip"
+
+  depends_on = [google_storage_bucket.functions_bucket]
+
+  entry_point         = "predict_categories_http"
+  timeout             = 60
+  available_memory_mb = 1024
+
+  trigger_http                  = true
+  https_trigger_security_level  = "SECURE_ALWAYS"
+
+  environment_variables = {
+    PROJECT_ID           = local.project_id
+    GOOGLE_CLOUD_PROJECT = local.project_id
+    LOG_LEVEL            = "INFO"
+  }
+
+  service_account_email = local.service_accounts.app_engine
+}
+
 # Cloud Scheduler for Performance Monitoring
 resource "google_cloud_scheduler_job" "performance_monitor_scheduler" {
   count = local.enabled_services.cloud_functions ? 1 : 0
@@ -402,6 +430,16 @@ resource "google_cloud_scheduler_job" "data_export_scheduler" {
   depends_on = [
     google_cloudfunctions_function.data_export_function
   ]
+}
+
+# Allow calling the ML inference function via IAM invoker binding for App Engine default SA
+resource "google_cloudfunctions_function_iam_member" "ml_inference_invoker" {
+  count          = local.enabled_services.cloud_functions ? 1 : 0
+  project        = local.project_id
+  region         = local.region
+  cloud_function = google_cloudfunctions_function.ml_inference_function[0].name
+  role           = "roles/cloudfunctions.invoker"
+  member         = "serviceAccount:${local.service_accounts.app_engine}"
 }
 
 # Cloud Scheduler job
@@ -585,6 +623,11 @@ output "bigquery_dataset" {
 output "model_retraining_function" {
   value = local.enabled_services.cloud_functions ? google_cloudfunctions_function.model_retraining[0].name : null
   description = "Model retraining Cloud Function name"
+}
+
+output "ml_inference_function" {
+  value = local.enabled_services.cloud_functions ? google_cloudfunctions_function.ml_inference_function[0].name : null
+  description = "Model Inference Cloud Function name"
 }
 
 output "model_performance_checker_url" {

@@ -554,7 +554,14 @@ echo [DEBUG] Checking ML configuration...
 echo import yaml > check_ml_config.py
 echo config = yaml.safe_load(open('config.yaml')) >> check_ml_config.py
 echo ml_enabled = config.get('features', {}).get('enabled_services', {}).get('ml', False) >> check_ml_config.py
+echo inference_cfg = config.get('ml', {}).get('inference', {}) >> check_ml_config.py
+echo inference_mode = inference_cfg.get('mode', 'cloud_function') >> check_ml_config.py
+echo function_url = inference_cfg.get('function_url', '') >> check_ml_config.py
+echo function_name = inference_cfg.get('function_name', 'ml-inference-function') >> check_ml_config.py
 echo print('ML_ENABLED=1' if ml_enabled else 'ML_ENABLED=0') >> check_ml_config.py
+echo print(f'INFERENCE_MODE={inference_mode}') >> check_ml_config.py
+echo print(f'FUNCTION_URL={function_url}') >> check_ml_config.py
+echo print(f'FUNCTION_NAME={function_name}') >> check_ml_config.py
 echo if ml_enabled: >> check_ml_config.py
 echo     print('VERTEX_AI_ENABLED=1' if config.get('features', {}).get('enabled_services', {}).get('aiplatform', True) else 'VERTEX_AI_ENABLED=0') >> check_ml_config.py
 echo     print('BIGQUERY_ENABLED=1' if config.get('features', {}).get('enabled_services', {}).get('bigquery', True) else 'BIGQUERY_ENABLED=0') >> check_ml_config.py
@@ -572,6 +579,24 @@ if "%ML_ENABLED%"=="1" (
     echo [DEBUG] ML features are enabled
     echo.
     echo === Setting up ML Components ===
+
+    echo [DEBUG] ML inference mode: %INFERENCE_MODE%
+    echo Using ML inference mode: %INFERENCE_MODE%
+    if "%INFERENCE_MODE%"=="cloud_function" (
+        if "%FUNCTION_URL%"=="" (
+            set "CF_DEFAULT_URL=https://%REGION%-%PROJECT_ID%.cloudfunctions.net/%FUNCTION_NAME%"
+            echo [DEBUG] No function_url set in config. Exporting ML_INFERENCE_FUNCTION_URL default: !CF_DEFAULT_URL!
+            set "ML_INFERENCE_FUNCTION_URL=!CF_DEFAULT_URL!"
+        ) else (
+            echo [DEBUG] Using configured CF function URL: %FUNCTION_URL%
+            set "ML_INFERENCE_FUNCTION_URL=%FUNCTION_URL%"
+        )
+    ) else if "%INFERENCE_MODE%"=="vertex_ai" (
+        if not "%VERTEX_AI_ENABLED%"=="1" (
+            echo [DEBUG] Warning: inference mode set to vertex_ai but Vertex AI feature flag is disabled.
+            echo Warning: inference mode is vertex_ai but features.enabled_services.aiplatform=false
+        )
+    )
     
     REM Install ML-specific requirements
     echo [DEBUG] Installing ML packages...

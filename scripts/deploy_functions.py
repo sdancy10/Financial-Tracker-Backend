@@ -138,6 +138,7 @@ class FunctionDeployer:
             'src.services.data_export_function': 'services_data_export_function',
             'src.services.feature_engineering': 'services_feature_engineering',
             'src.services.ml_prediction_service': 'services_ml_prediction_service',
+            'src.services.ml_inference_client': 'services_ml_inference_client',
             'src.services.ml_feedback_service': 'services_ml_feedback_service',
             'src.services.model_retraining_function': 'services_model_retraining_function',
             'src.services.model_monitoring_service': 'services_model_monitoring_service',

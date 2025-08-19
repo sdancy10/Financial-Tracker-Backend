@@ -22,6 +22,15 @@ gcp:
   region: %REGION%
   service_account_key_path: "credentials/service-account-key.json"
 
+ml:
+  inference:
+    mode: "cloud_function"  # Options: cloud_function | vertex_ai | local
+    # If mode is cloud_function, provide the HTTPS trigger URL
+    function_url: ""  # e.g., https://us-central1-%PROJECT_ID%.cloudfunctions.net/ml-inference-function
+    function_name: "ml-inference-function"
+    timeout_seconds: 15
+  local_model_path: ""  # Optional: path to a local .joblib for local testing
+
 pubsub:
   topics:
     transactions: "scheduled-transactions"  # Name of the transactions topic

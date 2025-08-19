@@ -62,6 +62,8 @@ Examples:
                        help='Model name for deployment (default: transaction_model_vYYYYMMDD)')
     parser.add_argument('--no-free-tier', action='store_true',
                        help='Use standard tier resources instead of cost-optimized')
+    parser.add_argument('--deploy-target', choices=['cloud_function', 'vertex_ai'], default='cloud_function',
+                        help='Where to deploy the trained model: cloud_function (default) or vertex_ai')
     
     # Data filtering options
     parser.add_argument('--user-id', help='Filter by single user ID (deprecated, use --user-ids)')
@@ -166,11 +168,14 @@ Examples:
             logger.info(f"Training model: {args.model_name}")
             logger.info("This may take several minutes...")
             
-            model, endpoint = trainer.train_and_deploy_model(args.model_name)
-            
-            logger.info(f"\nModel trained and deployed successfully!")
-            logger.info(f"Model: {model.resource_name}")
-            logger.info(f"Endpoint: {endpoint.resource_name}")
+            model, endpoint = trainer.train_and_deploy_model(args.model_name, deploy_target=args.deploy_target)
+
+            if args.deploy_target == 'vertex_ai' and model and endpoint:
+                logger.info(f"\nModel trained and deployed successfully!")
+                logger.info(f"Model: {model.resource_name}")
+                logger.info(f"Endpoint: {endpoint.resource_name}")
+            else:
+                logger.info("\nModel trained and artifacts uploaded. Use the Cloud Function for inference.")
             
         logger.info("\n" + "="*60)
         logger.info("Workflow Complete!")

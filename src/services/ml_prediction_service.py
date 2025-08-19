@@ -1,6 +1,7 @@
 from typing import Optional
 import logging
 import json
+import os
 import pandas as pd
 from datetime import datetime
 from google.cloud import aiplatform
@@ -10,6 +11,9 @@ from src.utils.config import Config
 import cachetools
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
+
+from src.services.ml_inference_client import CloudFunctionInferenceClient
 
 
 class MLPredictionService:
@@ -23,9 +27,49 @@ class MLPredictionService:
         # Initialize clients
         self.storage = storage.Client(project=project_id)
         
-        # Initialize Vertex AI
+        # Inference mode: cloud_function (default), vertex_ai, or local
+        self.inference_mode = self.config.get('ml', 'inference', 'mode', default='cloud_function')
         self.location = self.config.get('gcp', 'region', 'us-central1')
-        aiplatform.init(project=project_id, location=self.location)
+        
+        # Initialize according to mode
+        self.cf_client = None
+        if self.inference_mode == 'cloud_function':
+            # 1) Use config value if provided and non-empty
+            function_url = self.config.get('ml', 'inference', 'function_url')
+            if function_url:
+                self.logger.info(f"ML inference: using configured Cloud Function URL: {function_url}")
+            else:
+                # 2) Environment override
+                function_url = os.getenv('ML_INFERENCE_FUNCTION_URL')
+                if function_url:
+                    self.logger.info(f"ML inference: using env ML_INFERENCE_FUNCTION_URL: {function_url}")
+                else:
+                    # 3) Construct default 1st‑gen CF URL
+                    # Prefer env vars first, then config
+                    project = os.getenv('GOOGLE_CLOUD_PROJECT') or self.config.get('project', 'id') or self.project_id
+                    region = os.getenv('REGION') or self.location or os.getenv('GOOGLE_CLOUD_REGION') or 'us-central1'
+                    function_name = (
+                        self.config.get('ml', 'inference', 'function_name', default=None)
+                        or os.getenv('ML_INFERENCE_FUNCTION_NAME')
+                        or 'ml-inference-function'
+                    )
+                    if project and region and function_name:
+                        function_url = f"https://{region}-{project}.cloudfunctions.net/{function_name}"
+                        self.logger.info(f"ML inference: constructed Cloud Function URL: {function_url}")
+                    else:
+                        self.logger.warning("ML inference: unable to construct Cloud Function URL (missing project/region/name)")
+            timeout_seconds = self.config.get('ml', 'inference', 'timeout_seconds', default=15)
+            if function_url:
+                try:
+                    self.cf_client = CloudFunctionInferenceClient(function_url, timeout_seconds)
+                    self.logger.info(f"ML inference: initialized Cloud Function client (timeout={timeout_seconds}s)")
+                except Exception as e:
+                    self.logger.warning(f"Failed to initialize Cloud Function client: {e}")
+            else:
+                self.logger.warning("Cloud Function mode selected but 'function_url' is not configured")
+        else:
+            # Initialize Vertex AI only when needed
+            aiplatform.init(project=project_id, location=self.location)
         
         # Model configuration
         self.current_model = None
@@ -45,8 +89,12 @@ class MLPredictionService:
         # Model name pattern in Vertex AI
         self.model_display_name_prefix = "transaction_model"
         
-        # Load current model
-        self._load_current_model()
+        # Load current model metadata depending on mode
+        if self.inference_mode == 'vertex_ai':
+            self._load_current_model()
+        else:
+            # For cloud_function/local, model_version is determined server-side; we can set from config if present
+            self.model_version = None
     
     def _load_current_model(self):
         """Load the current active model from Vertex AI Model Registry"""
@@ -125,6 +173,12 @@ class MLPredictionService:
     
     def is_available(self) -> bool:
         """Check if ML prediction service is available"""
+        if self.inference_mode == 'cloud_function':
+            # Do not block on ping; consider available if client is set
+            available = bool(self.cf_client)
+            self.logger.info(f"ML inference availability (cloud_function): {available}")
+            return available
+        
         if self.endpoint is None:
             return False
         
@@ -163,10 +217,35 @@ class MLPredictionService:
     
     def predict_categories(self, transactions: list) -> list:
         """Predict categories for multiple transactions"""
-        self.logger.info(f"predict_categories called with {len(transactions)} transactions")
+        self.logger.info(f"predict_categories called with {len(transactions)} transactions (mode={self.inference_mode})")
         
-        # Skip availability check since the deployed model has the pandas DataFrame issue
-        # but our local feature engineering should handle it correctly
+        # Cloud Function mode
+        if self.inference_mode == 'cloud_function':
+            if not self.cf_client:
+                self.logger.warning("Cloud Function client not initialized, returning defaults")
+                return [self._get_default_prediction(source='cloud_function_unavailable') for _ in transactions]
+            try:
+                self.logger.info(f"Calling ML Cloud Function for {len(transactions)} transactions...")
+                preds = self.cf_client.predict(transactions)
+                # Ensure shape and fields; add timestamps and defaults
+                results = []
+                for p in preds:
+                    result = {
+                        'category': p.get('category', 'Uncategorized'),
+                        'subcategory': p.get('subcategory'),
+                        'confidence': float(p.get('confidence', 0.0)),
+                        'source': p.get('source', 'cloud_function'),
+                        'model_version': p.get('model_version', self.model_version),
+                        'predicted_at': datetime.utcnow().isoformat()
+                    }
+                    results.append(result)
+                self.logger.info(f"Received {len(results)} predictions from Cloud Function")
+                return results
+            except Exception as e:
+                self.logger.error(f"Cloud Function prediction failed: {e}")
+                return [self._get_default_prediction(source='cloud_function_error', error=str(e)) for _ in transactions]
+        
+        # Vertex AI mode
         if self.endpoint is None:
             self.logger.warning("No endpoint available, returning defaults")
             return [self._get_default_prediction() for _ in transactions]
@@ -355,7 +434,7 @@ class MLPredictionService:
         
         return f"{vendor}|{amount}|{template}".lower()
     
-    def _get_default_prediction(self) -> dict:
+    def _get_default_prediction(self, source: str = 'vertex_ai_unavailable', error: Optional[str] = None) -> dict:
         """Get default prediction when ML is unavailable"""
         return {
             'category': 'Uncategorized',
@@ -363,7 +442,8 @@ class MLPredictionService:
             'confidence': 0.0,
             'model_version': None,
             'predicted_at': datetime.utcnow().isoformat(),
-            'source': 'vertex_ai_unavailable'
+            'source': source,
+            'error': error
         }
     
     async def predict_categories_async(self, transactions: list) -> list:

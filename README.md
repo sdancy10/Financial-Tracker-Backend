@@ -90,8 +90,11 @@ python src/main.py
 ### Model Training and Deployment
 
 ```bash
-# Train model based on parquet data deployed to GCP bucket and publish to GCP
-python scripts/ml_training_workflow.py --project-id shanedancy-9f2a3 --train-only
+# Train model and save artifacts for Cloud Function inference (default)
+python scripts/ml_training_workflow.py --project-id shanedancy-9f2a3
+
+# Deploy only to Vertex AI (optional)
+python scripts/ml_training_workflow.py --project-id shanedancy-9f2a3 --deploy-target vertex_ai
 
 # Test a specific joblib model locally
 python scripts/ml_training_workflow.py --project-id shanedancy-9f2a3 --train-only
@@ -120,6 +123,21 @@ scripts/prepare_ml_data_2024.bat
 # Deploy the full backend
 scripts/setup.bat
 ```
+
+### Inference Modes
+
+- Default inference mode is via a Cloud Function to reduce costs. Configure in `config.yaml`:
+
+```yaml
+ml:
+  inference:
+    mode: cloud_function  # or vertex_ai or local
+    function_url: "https://us-central1-YOUR_PROJECT.cloudfunctions.net/ml-inference-function"
+    timeout_seconds: 15
+```
+
+- To use Vertex AI endpoint instead, set `mode: vertex_ai`.
+
 
 ## Support and Troubleshooting
 
