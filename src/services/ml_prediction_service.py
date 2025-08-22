@@ -58,7 +58,7 @@ class MLPredictionService:
                         self.logger.info(f"ML inference: constructed Cloud Function URL: {function_url}")
                     else:
                         self.logger.warning("ML inference: unable to construct Cloud Function URL (missing project/region/name)")
-            timeout_seconds = self.config.get('ml', 'inference', 'timeout_seconds', default=15)
+            timeout_seconds = self.config.get('ml', 'inference', 'timeout_seconds', default=45)
             if function_url:
                 try:
                     self.cf_client = CloudFunctionInferenceClient(function_url, timeout_seconds)

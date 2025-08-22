@@ -1,5 +1,7 @@
 import json
 import logging
+import time
+import random
 from typing import List, Dict, Any, Optional
 
 import requests
@@ -10,7 +12,7 @@ from google.auth.transport import requests as google_requests
 class CloudFunctionInferenceClient:
     """Client to call the ML inference Cloud Function with ID token auth."""
 
-    def __init__(self, function_url: str, timeout_seconds: int = 15):
+    def __init__(self, function_url: str, timeout_seconds: int = 45):
         if not function_url:
             raise ValueError("function_url is required for Cloud Function inference")
 
@@ -18,6 +20,8 @@ class CloudFunctionInferenceClient:
         self.timeout_seconds = timeout_seconds
         self.logger = logging.getLogger(__name__)
         self.session = requests.Session()
+        # Keep connections alive between invocations
+        self.session.mount('https://', requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=1))
         self._google_request = google_requests.Request()
 
     def _get_id_token(self) -> str:
@@ -26,40 +30,57 @@ class CloudFunctionInferenceClient:
         return id_token.fetch_id_token(self._google_request, self.function_url)
 
     def predict(self, transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Send transactions to the Cloud Function and return predictions."""
-        try:
-            token = self._get_id_token()
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            }
-            payload = {"transactions": transactions}
+        """Send transactions to the Cloud Function and return predictions with retry logic."""
+        max_retries = 2
+        base_delay = 1.0  # Start with 1 second delay
+        
+        for attempt in range(max_retries + 1):
+            try:
+                token = self._get_id_token()
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                }
+                payload = {"transactions": transactions}
 
-            self.logger.info("Posting transactions to ML Cloud Function...")
-            response = self.session.post(
-                self.function_url,
-                data=json.dumps(payload),
-                headers=headers,
-                timeout=self.timeout_seconds
-            )
-            self.logger.info(f"ML Cloud Function response status: {response.status_code}")
-            response.raise_for_status()
+                # Use longer timeout for first attempt (cold start), shorter for retries
+                timeout = self.timeout_seconds if attempt == 0 else 30
+                
+                self.logger.info(f"Posting transactions to ML Cloud Function (attempt {attempt + 1}/{max_retries + 1}, timeout={timeout}s)...")
+                response = self.session.post(
+                    self.function_url,
+                    data=json.dumps(payload),
+                    headers=headers,
+                    timeout=timeout
+                )
+                self.logger.info(f"ML Cloud Function response status: {response.status_code}")
+                response.raise_for_status()
 
-            data = response.json()
-            self.logger.info(f"ML Cloud Function returned model_version: {data.get('model_version')}")
-            predictions = data.get("predictions", [])
-            model_version = data.get("model_version")
-            if not isinstance(predictions, list):
-                raise ValueError("Invalid response format: 'predictions' must be a list")
-            # Attach model_version to each prediction if present
-            if model_version:
-                for p in predictions:
-                    if isinstance(p, dict) and 'model_version' not in p:
-                        p['model_version'] = model_version
-            return predictions
-        except Exception as e:
-            self.logger.error(f"Cloud Function inference failed: {e}")
-            raise
+                data = response.json()
+                self.logger.info(f"ML Cloud Function returned model_version: {data.get('model_version')}")
+                predictions = data.get("predictions", [])
+                model_version = data.get("model_version")
+                if not isinstance(predictions, list):
+                    raise ValueError("Invalid response format: 'predictions' must be a list")
+                # Attach model_version to each prediction if present
+                if model_version:
+                    for p in predictions:
+                        if isinstance(p, dict) and 'model_version' not in p:
+                            p['model_version'] = model_version
+                return predictions
+                
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if attempt < max_retries:
+                    # Exponential backoff with jitter
+                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    self.logger.warning(f"ML inference timeout/connection error (attempt {attempt + 1}), retrying in {delay:.1f}s: {e}")
+                    time.sleep(delay)
+                else:
+                    self.logger.error(f"Cloud Function inference failed after {max_retries + 1} attempts: {e}")
+                    raise
+            except Exception as e:
+                self.logger.error(f"Cloud Function inference failed: {e}")
+                raise
 
     def ping(self) -> bool:
         """Lightweight availability check."""
