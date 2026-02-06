@@ -442,6 +442,44 @@ resource "google_cloudfunctions_function_iam_member" "ml_inference_invoker" {
   member         = "serviceAccount:${local.service_accounts.app_engine}"
 }
 
+# Cloud Function for Transaction Ingest (HTTP) — used by Coinbase loader
+resource "google_cloudfunctions_function" "transaction_ingest_function" {
+  count       = local.enabled_services.cloud_functions ? 1 : 0
+  name        = "transaction-ingest-function"
+  runtime     = "python310"
+  region      = local.region
+
+  source_archive_bucket = google_storage_bucket.functions_bucket[0].name
+  source_archive_object = "transaction-ingest-function.zip"
+
+  depends_on = [google_storage_bucket.functions_bucket]
+
+  entry_point         = "ingest_transactions_http"
+  timeout             = 120
+  available_memory_mb = 1024
+
+  trigger_http                  = true
+  https_trigger_security_level  = "SECURE_ALWAYS"
+
+  environment_variables = {
+    PROJECT_ID           = local.project_id
+    GOOGLE_CLOUD_PROJECT = local.project_id
+    LOG_LEVEL            = "INFO"
+  }
+
+  service_account_email = local.service_accounts.app_engine
+}
+
+# Allow calling the transaction ingest function
+resource "google_cloudfunctions_function_iam_member" "transaction_ingest_invoker" {
+  count          = local.enabled_services.cloud_functions ? 1 : 0
+  project        = local.project_id
+  region         = local.region
+  cloud_function = google_cloudfunctions_function.transaction_ingest_function[0].name
+  role           = "roles/cloudfunctions.invoker"
+  member         = "allUsers"
+}
+
 # Cloud Scheduler job
 resource "google_cloud_scheduler_job" "transaction_scheduler" {
   count = local.enabled_services.scheduler ? 1 : 0
@@ -633,6 +671,11 @@ output "ml_inference_function" {
 output "model_performance_checker_url" {
   value = local.enabled_services.cloud_functions ? google_cloudfunctions_function.model_performance_checker[0].https_trigger_url : null
   description = "Model performance checker HTTP endpoint"
+}
+
+output "transaction_ingest_function_url" {
+  value = local.enabled_services.cloud_functions ? google_cloudfunctions_function.transaction_ingest_function[0].https_trigger_url : null
+  description = "Transaction ingest HTTP endpoint (used by Coinbase loader)"
 }
 
 output "ml_feedback_table" {

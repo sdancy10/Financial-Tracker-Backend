@@ -111,6 +111,20 @@ class MLFunctionDeployer:
                     'src/services/__init__.py',
                     'src/services/feature_engineering.py'
                 ]
+            },
+            {
+                'name': 'transaction-ingest-function',
+                'source_file': 'src/services/transaction_ingest_function.py',
+                'entry_point': 'ingest_transactions_http',
+                'trigger_type': 'http',
+                'dependencies': [
+                    'src/services/feature_engineering.py',
+                    'src/utils/transaction_dao.py',
+                    'src/utils/config.py',
+                    'src/utils/__init__.py',
+                    'src/services/__init__.py',
+                    'src/models/__init__.py'
+                ]
             }
         ]
         
