@@ -119,6 +119,7 @@ class MLFunctionDeployer:
                 'trigger_type': 'http',
                 'dependencies': [
                     'src/services/feature_engineering.py',
+                    'src/models/transaction_trainer.py',
                     'src/utils/transaction_dao.py',
                     'src/utils/config.py',
                     'src/utils/__init__.py',
