@@ -26,6 +26,7 @@ class TransactionParser:
         '%Y-%m-%d %H:%M:%S',      # 2024-12-30 17:07:00
         '%m/%d/%y %I:%M %p',      # 12/30/24 5:07 PM
         '%a, %d %b %Y %H:%M:%S %z',  # e.g. Tue, 24 Dec 2024 21:44:55 +0000
+        '%d %b %Y %H:%M:%S %z',      # e.g. 4 Jun 2026 05:18:09 -0400 (weekday-less RFC style, e.g. Croghan)
         '%Y-%m-%dT%H:%M:%S%z',     # ISO format with timezone
         '%Y-%m-%d %H:%M:%S%z',     # ISO-like with timezone
         '%d/%m/%Y %H:%M:%S%z',     # Common format with timezone
@@ -141,6 +142,19 @@ class TransactionParser:
 
     # Transaction email templates
     TEMPLATES = {
+        'Croghan Colonial Bank - Account Activity': {
+            'iterate_results': False,
+            # Subject-gated so only Croghan alerts try this template; placed first so a
+            # generic template can't mis-grab a Croghan email.
+            'subject_pattern': r'Croghan Colonial Bank',
+            'account': r'Number\s*:\s*x*(\d{4})',
+            'amount': r'Amount\s*:\s*\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            # These are account-activity alerts (no merchant), so the transaction "Type"
+            # serves as the vendor. Anchored on "Transaction details:" so it captures the
+            # transaction type (e.g. "External Deposit"), not the account type ("Checking").
+            'vendor': r'(?s)Transaction details:\s*Type\s*:\s*(.+?)\s+Amount',
+            'date': '',  # No date in body; falls back to the email's Date header.
+        },
         'Huntington Checking/Savings': {
             'iterate_results': False,
             'account': r'(?<=CK)(\d{4})',
